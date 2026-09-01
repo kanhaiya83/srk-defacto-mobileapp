@@ -107,9 +107,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           return (
             <Animated.View
               key={item.id}
-              entering={SlideInUp.springify().damping(18).stiffness(180)}
+              entering={SlideInUp.duration(200)}
               exiting={FadeOutUp.duration(160)}
-              layout={LinearTransition.springify().damping(18)}
+              layout={LinearTransition.duration(160)}
             >
               <Pressable
                 onPress={() => dismiss(item.id)}

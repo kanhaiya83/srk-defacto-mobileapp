@@ -63,8 +63,8 @@ export function Sheet({
           pointerEvents="box-none"
         >
           <Animated.View
-            entering={SlideInDown.springify().damping(22).stiffness(220)}
-            exiting={SlideOutDown.duration(200)}
+            entering={SlideInDown.duration(200)}
+            exiting={SlideOutDown.duration(180)}
             style={[
               theme.shadow(3),
               {
