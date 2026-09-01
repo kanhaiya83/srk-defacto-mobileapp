@@ -42,7 +42,9 @@ export function formatRelative(value?: string | Date | null): string {
 
   const seconds = Math.round((Date.now() - date.getTime()) / 1000);
   if (seconds < 60) return 'just now';
-  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+
+  // Avoid Intl.RelativeTimeFormat — not available on all Hermes/Android versions.
+  const units: [string, number][] = [
     ['minute', 60],
     ['hour', 3600],
     ['day', 86400],
@@ -50,10 +52,10 @@ export function formatRelative(value?: string | Date | null): string {
     ['month', 2592000],
     ['year', 31536000],
   ];
-  let chosen: [Intl.RelativeTimeFormatUnit, number] = units[0];
+  let chosen: [string, number] = units[0];
   for (const unit of units) if (seconds >= unit[1]) chosen = unit;
-  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-  return formatter.format(-Math.round(seconds / chosen[1]), chosen[0]);
+  const count = Math.round(seconds / chosen[1]);
+  return `${count} ${chosen[0]}${count !== 1 ? 's' : ''} ago`;
 }
 
 /** Indian digit grouping, no currency symbol. */
