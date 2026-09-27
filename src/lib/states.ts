@@ -37,3 +37,18 @@ export const STATES: { value: string; label: string }[] = [
   { value: 'UP', label: 'Uttar Pradesh' },
   { value: 'WB', label: 'West Bengal' },
 ];
+
+/**
+ * Vendors store the state's full name, not its code — the web client saves
+ * "Rajasthan", and the bill screens match on it. Pickers use these options.
+ */
+export const STATE_NAME_OPTIONS: { value: string; label: string }[] = STATES.map((state) => ({
+  value: state.label,
+  label: state.label,
+}));
+
+/** Full state name for a stored value; repairs vendors saved with a code ("RJ"). */
+export const toStateName = (value: unknown): string => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return STATES.find((state) => state.value === raw.toUpperCase())?.label ?? raw;
+};

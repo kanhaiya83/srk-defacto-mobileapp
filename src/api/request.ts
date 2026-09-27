@@ -181,15 +181,29 @@ request.interceptors.response.use(
   }
 );
 
-/** Extracts a displayable message from an axios error. */
+/**
+ * Extracts a displayable message from an axios error.
+ *
+ * The server answers in two shapes, and both must be read:
+ *   { error: "message" }                     business endpoints (masters, stock)
+ *   { error: { code, message, details } }    auth, permissions, rate limits, validation
+ * Reading only the second turned every "Cannot delete: it is still used by…"
+ * into "Request failed with status code 409".
+ */
 export const getErrorMessage = (error: unknown, fallback = 'Something went wrong'): string => {
   if (axios.isAxiosError(error)) {
-    const apiError = (error.response?.data as { error?: ApiError } | undefined)?.error;
-    if (apiError?.details && Array.isArray(apiError.details)) {
-      const issues = apiError.details as Array<{ field: string; message: string }>;
-      if (issues.length > 0) return issues.map((i) => i.message).join(', ');
+    const payload = (error.response?.data as { error?: string | ApiError } | undefined)?.error;
+    if (typeof payload === 'string' && payload.trim()) return payload;
+    if (payload && typeof payload === 'object') {
+      if (Array.isArray(payload.details)) {
+        const issues = (payload.details as { message?: unknown }[])
+          .map((issue) => issue?.message)
+          .filter((message): message is string => typeof message === 'string' && message.length > 0);
+        if (issues.length > 0) return issues.join(', ');
+      }
+      if (payload.message) return payload.message;
     }
-    return apiError?.message ?? error.message ?? fallback;
+    return error.response ? fallback : error.message || fallback;
   }
   if (error instanceof Error) return error.message;
   return fallback;

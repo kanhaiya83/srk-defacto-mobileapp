@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useQueries, type UseQueryResult } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
 
 import { Text } from '@/components/ui/text';
 import { MultiSelect, Select, type Option } from '@/components/ui/select';
-import type { ReferenceSource } from './registry';
-import { useResourceList } from './use-resource';
-import { EM_DASH } from '@/lib/format';
+import type { ReferenceNames, ReferenceSource } from './registry';
+import { fetchResourceList, useResourceList, type MasterRecord } from './use-resource';
+import { usePermissions } from '@/hooks/use-permissions';
+import { EM_DASH, refId } from '@/lib/format';
 
 /**
  * Reference fields.
@@ -22,21 +24,75 @@ const SOURCES: Record<ReferenceSource, { resource: string; label: string; second
   vendor: { resource: 'vendors', label: 'vendor_name', secondary: 'state' },
 };
 
-export function useReferenceOptions(source: ReferenceSource): { options: Option[]; isLoading: boolean } {
+const byLabel = (a: Option, b: Option) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+
+/**
+ * Picker options for a source, alphabetical as on the web. `unavailable` maps a
+ * value to the reason it cannot be picked; those options are shown disabled.
+ */
+export function useReferenceOptions(
+  source: ReferenceSource,
+  unavailable?: Record<string, string>
+): { options: Option[]; isLoading: boolean } {
   const spec = SOURCES[source];
   const { data, isLoading } = useResourceList(spec.resource);
 
   const options = useMemo<Option[]>(
     () =>
-      (data ?? []).map((item) => ({
-        value: String((item as Record<string, unknown>)._id),
-        label: String((item as Record<string, unknown>)[spec.label] ?? 'Unnamed'),
-        description: spec.secondary ? (String((item as Record<string, unknown>)[spec.secondary] ?? '') || undefined) : undefined,
-      })),
-    [data, spec]
+      (data ?? [])
+        .map((item) => {
+          const record = item as Record<string, unknown>;
+          const value = String(record._id);
+          const reason = unavailable?.[value];
+          return {
+            value,
+            label: String(record[spec.label] ?? 'Unnamed'),
+            description: reason ?? (spec.secondary ? String(record[spec.secondary] ?? '') || undefined : undefined),
+            disabled: Boolean(reason),
+          };
+        })
+        .sort(byLabel),
+    [data, spec, unavailable]
   );
 
   return { options, isLoading };
+}
+
+/**
+ * Display names for every record of the given sources, for list cards that
+ * store only ids. A source the role cannot read is never requested — its names
+ * simply resolve to `undefined`.
+ */
+const NO_SOURCES: ReferenceSource[] = [];
+
+export function useReferenceNames(sources: ReferenceSource[] = NO_SOURCES): ReferenceNames {
+  const { can } = usePermissions();
+
+  const combine = useCallback(
+    (results: UseQueryResult<MasterRecord[]>[]) =>
+      new Map(
+        results.map((result, index) => {
+          const spec = SOURCES[sources[index]];
+          const names = new Map<string, string>();
+          for (const record of result.data ?? []) {
+            if (record[spec.label]) names.set(String(record._id), String(record[spec.label]));
+          }
+          return [sources[index], names] as const;
+        })
+      ),
+    [sources]
+  );
+
+  const lookups = useQueries({
+    queries: sources.map((source) => ({
+      queryKey: [SOURCES[source].resource],
+      queryFn: () => fetchResourceList(SOURCES[source].resource),
+      enabled: can(`${source}:read`),
+    })),
+    combine,
+  });
+
+  return useCallback((source, id) => lookups.get(source)?.get(refId(id)), [lookups]);
 }
 
 export function ReferenceSelect({
@@ -48,6 +104,7 @@ export function ReferenceSelect({
   disabled,
   error,
   clearable,
+  onCreate,
 }: {
   source: ReferenceSource;
   value?: string | null;
@@ -57,6 +114,7 @@ export function ReferenceSelect({
   disabled?: boolean;
   error?: boolean;
   clearable?: boolean;
+  onCreate?: () => void;
 }) {
   const { options, isLoading } = useReferenceOptions(source);
   return (
@@ -69,6 +127,8 @@ export function ReferenceSelect({
       disabled={disabled || isLoading}
       error={error}
       clearable={clearable}
+      onCreate={onCreate}
+      createLabel={title ? `Add ${title.toLowerCase()}` : undefined}
     />
   );
 }
@@ -81,6 +141,8 @@ export function ReferenceMultiSelect({
   title,
   disabled,
   error,
+  unavailable,
+  onCreate,
 }: {
   source: ReferenceSource;
   values: string[];
@@ -89,8 +151,10 @@ export function ReferenceMultiSelect({
   title?: string;
   disabled?: boolean;
   error?: boolean;
+  unavailable?: Record<string, string>;
+  onCreate?: () => void;
 }) {
-  const { options, isLoading } = useReferenceOptions(source);
+  const { options, isLoading } = useReferenceOptions(source, unavailable);
   return (
     <MultiSelect
       values={values}
@@ -100,6 +164,7 @@ export function ReferenceMultiSelect({
       placeholder={isLoading ? 'Loading…' : (placeholder ?? 'Select')}
       disabled={disabled || isLoading}
       error={error}
+      onCreate={onCreate}
     />
   );
 }

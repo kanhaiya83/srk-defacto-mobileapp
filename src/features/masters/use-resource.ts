@@ -13,10 +13,13 @@ import request from '@/api/request';
 
 export type MasterRecord = Record<string, unknown> & { _id: string; createdAt?: string; updatedAt?: string };
 
+export const fetchResourceList = <T = MasterRecord>(resource: string) =>
+  request.get<T[]>(`/api/${resource}`).then((res) => res.data);
+
 export const useResourceList = <T = MasterRecord>(resource: string, enabled = true) =>
   useQuery({
     queryKey: [resource],
-    queryFn: () => request.get<T[]>(`/api/${resource}`).then((res) => res.data),
+    queryFn: () => fetchResourceList<T>(resource),
     enabled,
   });
 

@@ -66,7 +66,7 @@ export function DateField({
       <Text variant="body" tone={value ? 'default' : 'faint'} style={{ flex: 1 }}>
         {value ? formatDate(value) : placeholder}
       </Text>
-      {clearable && value && !disabled && (
+      {clearable && !!value && !disabled && (
         <Pressable hitSlop={8} accessibilityRole="button" accessibilityLabel="Clear date" onPress={() => onChange('')}>
           <Ionicons name="close-circle" size={18} color={theme.colors.faintText} />
         </Pressable>

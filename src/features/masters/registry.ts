@@ -1,7 +1,9 @@
 import type { Ionicons } from '@expo/vector-icons';
 
 import type { RecordField } from '@/components/record-card';
+import type { BadgeTone } from '@/components/ui/badge';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format';
+import { STATE_NAME_OPTIONS, toStateName } from '@/lib/states';
 
 /**
  * Master-data registry.
@@ -12,7 +14,21 @@ import { formatCurrency, formatDate, formatNumber } from '@/lib/format';
  * identically: same search, same validation placement, same delete guard.
  */
 
+/** A master other masters point at. Each key is also that master's route and permission module. */
 export type ReferenceSource = 'commodity' | 'company' | 'bag-type' | 'bag-grade' | 'vendor';
+
+/** Resolves a stored reference id to its display name, once the source has loaded. */
+export type ReferenceNames = (source: ReferenceSource, id: unknown) => string | undefined;
+
+type Item = Record<string, unknown>;
+
+export interface MasterSubField {
+  key: string;
+  label: string;
+  type?: 'text' | 'phone' | 'email';
+  /** Every kept row must fill this in. */
+  required?: boolean;
+}
 
 export interface MasterField {
   key: string;
@@ -29,22 +45,37 @@ export interface MasterField {
     | 'options'
     | 'string-list'
     | 'object-list';
+  /** For `object-list`, at least one filled-in row. */
   required?: boolean;
   placeholder?: string;
   hint?: string;
   /** Where a `reference*` field's options come from. */
   source?: ReferenceSource;
+  /**
+   * A `reference-multi` value may belong to only one record of this master
+   * (a company sits in one group). Values taken by other records are disabled.
+   */
+  exclusive?: boolean;
   /** Fixed choices for an `options` field. */
   options?: { label: string; value: string }[];
   /** `options` accepts more than one value. */
   multiple?: boolean;
   /** Sub-fields of an `object-list` row. */
-  itemFields?: { key: string; label: string; type?: 'text' | 'phone' | 'email' }[];
+  itemFields?: MasterSubField[];
   /** Row label for list fields, e.g. "Contact". */
   itemLabel?: string;
+  /**
+   * `object-list` rows carry a stable id under this key, generated for new
+   * rows. Other records point at the row by it (stock sits in a sub-location).
+   */
+  rowId?: string;
   /** Field is shown but never sent — server-derived. */
   readOnly?: boolean;
   suffix?: string;
+  /** Normalises a stored value when a record is opened for editing. */
+  load?: (value: unknown) => unknown;
+  /** On a new record, recomputed whenever the named field changes (e.g. slug from name). */
+  derive?: { from: string; compute: (value: unknown) => unknown };
 }
 
 export interface MasterConfig {
@@ -56,16 +87,30 @@ export interface MasterConfig {
   description: string;
   /** React Query key + REST collection, as used by `masters-api`. */
   resource: string;
-  primary: (item: Record<string, unknown>) => string;
-  secondary?: (item: Record<string, unknown>) => string | undefined;
-  cardFields?: (item: Record<string, unknown>) => RecordField[];
-  search: (item: Record<string, unknown>) => unknown[];
+  /** Other masters whose names the list shows. Each is fetched only if the role may read it. */
+  uses?: ReferenceSource[];
+  primary: (item: Item, names: ReferenceNames) => string;
+  secondary?: (item: Item, names: ReferenceNames) => string | undefined;
+  cardFields?: (item: Item, names: ReferenceNames) => RecordField[];
+  badge?: (item: Item) => { label: string; tone?: BadgeTone } | undefined;
+  search: (item: Item, names: ReferenceNames) => unknown[];
+  /** Filter chips over one reference field — the web groups these lists by it. */
+  groupBy?: { key: string; source: ReferenceSource };
   fields: MasterField[];
   /** Records can be edited but not created or deleted (Item Rates). */
   editOnly?: boolean;
 }
 
 const str = (value: unknown) => (value === null || value === undefined ? '' : String(value));
+const list = <T = unknown>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/** "Shree Ram Krishna Traders" → "SRKT", as the web client suggests it. */
+const slugFromName = (value: unknown) =>
+  str(value)
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('');
 
 export const MASTER_CONFIGS: Record<string, MasterConfig> = {
   // ------------------------------------------------------------------ agent
@@ -79,12 +124,12 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     primary: (item) => str(item.agent_name),
     secondary: (item) => str(item.mobile_no) || undefined,
     cardFields: (item) => [
-      { label: 'Mobile', value: str(item.mobile_no) },
+      { label: 'Email', value: str(item.email) },
       { label: 'PAN', value: str(item.pan_no) },
       { label: 'Bank', value: str(item.bank_name) },
       { label: 'Account', value: str(item.account_no) },
     ],
-    search: (item) => [item.agent_name, item.mobile_no, item.email, item.pan_no, item.bank_name],
+    search: (item) => [item.agent_name, item.mobile_no, item.email, item.pan_no, item.bank_name, item.office_address],
     fields: [
       { key: 'agent_name', label: 'Agent name', type: 'text', required: true },
       { key: 'mobile_no', label: 'Mobile no', type: 'phone', required: true },
@@ -121,9 +166,12 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     icon: 'bar-chart-outline',
     description: 'Quality grades, one commodity each',
     resource: 'grades',
+    uses: ['commodity'],
+    groupBy: { key: 'commodity_id', source: 'commodity' },
     primary: (item) => str(item.grade_name),
+    secondary: (item, names) => names('commodity', item.commodity_id),
     cardFields: (item) => [{ label: 'Rate', value: item.rate ? formatCurrency(Number(item.rate)) : null }],
-    search: (item) => [item.grade_name],
+    search: (item, names) => [item.grade_name, names('commodity', item.commodity_id)],
     fields: [
       { key: 'grade_name', label: 'Grade name', type: 'text', required: true },
       { key: 'commodity_id', label: 'Commodity', type: 'reference', source: 'commodity', required: true },
@@ -138,10 +186,15 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     icon: 'cash-outline',
     description: 'The rate carried by each grade',
     resource: 'grades',
+    uses: ['commodity'],
+    groupBy: { key: 'commodity_id', source: 'commodity' },
     editOnly: true,
     primary: (item) => str(item.grade_name),
-    secondary: (item) => (item.rate ? `Rate ${formatCurrency(Number(item.rate))}` : 'No rate set'),
-    search: (item) => [item.grade_name],
+    secondary: (item, names) => names('commodity', item.commodity_id),
+    cardFields: (item) => [
+      { label: 'Rate', value: item.rate ? formatCurrency(Number(item.rate)) : 'Not set', emphasis: Boolean(item.rate) },
+    ],
+    search: (item, names) => [item.grade_name, names('commodity', item.commodity_id)],
     fields: [
       { key: 'grade_name', label: 'Grade', type: 'text', readOnly: true },
       { key: 'rate', label: 'Rate', type: 'number', suffix: '₹' },
@@ -195,12 +248,19 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     icon: 'options-outline',
     description: 'Size and tare weight per bag type and grade',
     resource: 'bag-type-configurations',
-    primary: (item) => `${formatNumber(Number(item.bag_size_kg))} kg bag`,
+    uses: ['bag-type', 'bag-grade'],
+    primary: (item, names) => names('bag-type', item.bag_type_id) ?? 'Bag type',
+    secondary: (item, names) => names('bag-grade', item.bag_grade_id),
     cardFields: (item) => [
       { label: 'Size', value: `${formatNumber(Number(item.bag_size_kg))} kg`, emphasis: true },
       { label: 'Tare weight', value: `${formatNumber(Number(item.bag_weight), 2)} kg` },
     ],
-    search: (item) => [item.bag_size_kg, item.bag_weight],
+    search: (item, names) => [
+      names('bag-type', item.bag_type_id),
+      names('bag-grade', item.bag_grade_id),
+      item.bag_size_kg,
+      item.bag_weight,
+    ],
     fields: [
       { key: 'bag_type_id', label: 'Bag type', type: 'reference', source: 'bag-type', required: true },
       { key: 'bag_grade_id', label: 'Bag grade', type: 'reference', source: 'bag-grade', required: true },
@@ -218,17 +278,24 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     description: 'Legal entities that raise and receive bills',
     resource: 'companies',
     primary: (item) => str(item.company_name),
-    secondary: (item) => str(item.gst_no) || undefined,
+    secondary: (item) => [str(item.slug), str(item.gst_no)].filter(Boolean).join(' · ') || undefined,
     cardFields: (item) => [
-      { label: 'GST', value: str(item.gst_no) },
-      { label: 'PAN', value: str(item.pan_no) },
+      { label: 'Mobile', value: list<string>(item.mobile_no).join(', ') },
+      { label: 'Email', value: str(item.email) },
       { label: 'Challan', value: `${str(item.challan_prefix)}${str(item.challan_series)}` },
       { label: 'Established', value: item.date_of_establishment ? formatDate(String(item.date_of_establishment)) : null },
     ],
-    search: (item) => [item.company_name, item.gst_no, item.pan_no, item.email, item.slug],
+    search: (item) => [item.company_name, item.gst_no, item.pan_no, item.email, item.slug, item.office_address],
     fields: [
       { key: 'company_name', label: 'Company name', type: 'text', required: true },
-      { key: 'slug', label: 'Slug', type: 'text', required: true, hint: 'Short code used on documents' },
+      {
+        key: 'slug',
+        label: 'Slug',
+        type: 'text',
+        required: true,
+        hint: 'Short code used on documents — filled in from the name',
+        derive: { from: 'company_name', compute: slugFromName },
+      },
       { key: 'office_address', label: 'Office address', type: 'textarea', required: true },
       { key: 'factory_address', label: 'Factory address', type: 'textarea' },
       { key: 'gst_no', label: 'GST no', type: 'text' },
@@ -253,9 +320,14 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     icon: 'git-merge-outline',
     description: 'Stock is held against a group, not a single company',
     resource: 'company-groups',
+    uses: ['company'],
     primary: (item) => str(item.group_name),
-    secondary: (item) => `${(item.company_ids as string[] | undefined)?.length ?? 0} companies`,
-    search: (item) => [item.group_name],
+    secondary: (item, names) => {
+      const ids = list(item.company_ids);
+      const known = ids.map((id) => names('company', id)).filter(Boolean);
+      return known.length ? known.join(', ') : `${ids.length} companies`;
+    },
+    search: (item, names) => [item.group_name, ...list(item.company_ids).map((id) => names('company', id))],
     fields: [
       { key: 'group_name', label: 'Group name', type: 'text', required: true },
       {
@@ -264,6 +336,7 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
         type: 'reference-multi',
         source: 'company',
         required: true,
+        exclusive: true,
         hint: 'A company can belong to only one group',
       },
     ],
@@ -279,6 +352,13 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     resource: 'machines',
     primary: (item) => str(item.machine_name),
     secondary: (item) => str(item.remark) || undefined,
+    // The server populates the lot a machine is running, so its number is at hand.
+    badge: (item) => {
+      const lot = item.locked_in_lot as { lot_no?: unknown } | string | null | undefined;
+      if (!lot) return { label: 'Available', tone: 'success' };
+      const lotNo = typeof lot === 'object' ? lot.lot_no : undefined;
+      return { label: lotNo ? `In lot #${str(lotNo)}` : 'In a lot', tone: 'warning' };
+    },
     search: (item) => [item.machine_name, item.remark],
     fields: [
       { key: 'machine_name', label: 'Machine name', type: 'text', required: true },
@@ -308,14 +388,23 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     description: 'Buyers and sellers you trade with',
     resource: 'vendors',
     primary: (item) => str(item.vendor_name),
-    secondary: (item) => ((item.category as string[] | undefined) ?? []).join(' · ') || undefined,
-    cardFields: (item) => [
-      { label: 'GST', value: str(item.gst_no) },
-      { label: 'State', value: str(item.state) },
-      { label: 'Contacts', value: ((item.contact_details as unknown[] | undefined) ?? []).length },
-      { label: 'Landline', value: str(item.landline_no) },
+    secondary: (item) => list<string>(item.category).map(capitalize).join(' · ') || undefined,
+    cardFields: (item) => {
+      const contact = list<{ person?: string; mobile_no?: string }>(item.contact_details)[0];
+      return [
+        { label: 'Contact', value: contact ? [contact.person, contact.mobile_no].filter(Boolean).join(' · ') : null },
+        { label: 'State', value: toStateName(item.state) },
+        { label: 'GST', value: str(item.gst_no) },
+        { label: 'Landline', value: str(item.landline_no) },
+      ];
+    },
+    search: (item) => [
+      item.vendor_name,
+      item.gst_no,
+      item.pan_no,
+      toStateName(item.state),
+      ...list<{ person?: string; mobile_no?: string }>(item.contact_details).flatMap((c) => [c.person, c.mobile_no]),
     ],
-    search: (item) => [item.vendor_name, item.gst_no, item.pan_no, item.state],
     fields: [
       {
         key: 'category',
@@ -329,7 +418,7 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
         ],
       },
       { key: 'vendor_name', label: 'Vendor name', type: 'text', required: true },
-      { key: 'state', label: 'State', type: 'options', required: true },
+      { key: 'state', label: 'State', type: 'options', required: true, options: STATE_NAME_OPTIONS, load: toStateName },
       { key: 'pan_no', label: 'PAN no', type: 'text' },
       { key: 'gst_no', label: 'GST no', type: 'text' },
       { key: 'landline_no', label: 'Landline no', type: 'phone' },
@@ -352,7 +441,7 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
         type: 'object-list',
         itemLabel: 'Address',
         itemFields: [
-          { key: 'label', label: 'Label' },
+          { key: 'label', label: 'Label (e.g. Warehouse)' },
           { key: 'address', label: 'Address' },
         ],
       },
@@ -367,12 +456,24 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     icon: 'card-outline',
     description: 'Bank accounts held per vendor',
     resource: 'vendor-bank-details',
-    primary: (item) => `${((item.banks as unknown[] | undefined) ?? []).length} account(s)`,
-    search: (item) => [
-      ...(((item.banks as { bank_name?: string; account_no?: string }[] | undefined) ?? []).flatMap((bank) => [
-        bank.bank_name,
-        bank.account_no,
-      ]) as string[]),
+    uses: ['vendor'],
+    primary: (item, names) => names('vendor', item.vendor_id) ?? 'Vendor',
+    secondary: (item) => {
+      const count = list(item.banks).length;
+      return `${count} account${count === 1 ? '' : 's'}`;
+    },
+    cardFields: (item) => {
+      const bank = list<Record<string, string>>(item.banks)[0];
+      return [
+        { label: 'Bank', value: bank?.bank_name },
+        { label: 'Account', value: bank?.account_no },
+        { label: 'Branch', value: bank?.branch },
+        { label: 'IFSC', value: bank?.ifsc_code },
+      ];
+    },
+    search: (item, names) => [
+      names('vendor', item.vendor_id),
+      ...list<Record<string, string>>(item.banks).flatMap((bank) => [bank.bank_name, bank.account_no, bank.ifsc_code]),
     ],
     fields: [
       { key: 'vendor_id', label: 'Vendor', type: 'reference', source: 'vendor', required: true },
@@ -381,6 +482,7 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
         label: 'Bank accounts',
         type: 'object-list',
         itemLabel: 'Account',
+        required: true,
         itemFields: [
           { key: 'bank_name', label: 'Bank name' },
           { key: 'branch', label: 'Branch' },
@@ -400,8 +502,13 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
     description: 'Locations and the sub-locations inside them',
     resource: 'warehouse-locations',
     primary: (item) => str(item.location_name),
-    secondary: (item) => `${((item.sub_locations as unknown[] | undefined) ?? []).length} sub-locations`,
-    search: (item) => [item.location_name],
+    secondary: (item) => {
+      const names = list<{ name?: string }>(item.sub_locations)
+        .map((sub) => sub.name)
+        .filter(Boolean);
+      return names.length ? names.join(', ') : 'No sub-locations';
+    },
+    search: (item) => [item.location_name, ...list<{ name?: string }>(item.sub_locations).map((sub) => sub.name)],
     fields: [
       { key: 'location_name', label: 'Location name', type: 'text', required: true },
       {
@@ -409,7 +516,9 @@ export const MASTER_CONFIGS: Record<string, MasterConfig> = {
         label: 'Sub-locations',
         type: 'object-list',
         itemLabel: 'Sub-location',
-        itemFields: [{ key: 'name', label: 'Name' }],
+        required: true,
+        rowId: 'id',
+        itemFields: [{ key: 'name', label: 'Name', required: true }],
       },
     ],
   },

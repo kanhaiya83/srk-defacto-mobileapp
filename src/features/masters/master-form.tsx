@@ -10,8 +10,21 @@ import { Field, Input, NumberInput } from '@/components/ui/field';
 import { CheckboxRow } from '@/components/ui/misc';
 import { MultiSelect, Select } from '@/components/ui/select';
 import { Text } from '@/components/ui/text';
-import { STATES } from '@/lib/states';
+import { objectId } from '@/lib/object-id';
 import { useTheme } from '@/theme';
+
+type Row = Record<string, string>;
+
+/** An empty `object-list` row, carrying a fresh id when rows are addressed by one. */
+function blankRow(field: MasterField): Row {
+  const row: Row = Object.fromEntries((field.itemFields ?? []).map((sub) => [sub.key, '']));
+  if (field.rowId) row[field.rowId] = objectId();
+  return row;
+}
+
+/** A row counts as filled if any visible sub-field has text — its hidden id does not. */
+const rowHasContent = (field: MasterField, row: Row) =>
+  (field.itemFields ?? []).some((sub) => typeof row?.[sub.key] === 'string' && row[sub.key].trim().length > 0);
 
 /** Blank value for a field, used for both "new record" and "add a row". */
 export function emptyValueFor(field: MasterField): unknown {
@@ -25,10 +38,32 @@ export function emptyValueFor(field: MasterField): unknown {
     case 'string-list':
       return [''];
     case 'object-list':
-      return [];
+      // A required list opens with a row to type into, as on the web.
+      return field.required ? [blankRow(field)] : [];
     default:
       return '';
   }
+}
+
+/** Form values for a new record (`record` undefined) or an existing one. */
+export function seedValues(fields: MasterField[], record?: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    fields.map((field) => {
+      const raw = record?.[field.key];
+      if (raw === undefined || raw === null) return [field.key, emptyValueFor(field)];
+      const value = field.load ? field.load(raw) : raw;
+      if (Array.isArray(value) && value.length === 0 && (field.type === 'string-list' || field.required)) {
+        // A stored empty list still needs one visible row to type into.
+        return [field.key, emptyValueFor(field)];
+      }
+      if (field.type === 'object-list' && field.rowId && Array.isArray(value)) {
+        // Rows saved without an id (older app builds) get one now, so stock can point at them.
+        const idKey = field.rowId;
+        return [field.key, (value as Row[]).map((row) => (row?.[idKey] ? row : { ...row, [idKey]: objectId() }))];
+      }
+      return [field.key, value];
+    })
+  );
 }
 
 /** First failing requirement, in field order — matches the web forms' behaviour. */
@@ -37,12 +72,27 @@ export function firstValidationError(
   values: Record<string, unknown>
 ): { key: string; message: string } | null {
   for (const field of fields) {
-    if (!field.required) continue;
     const value = values[field.key];
+
+    if (field.type === 'object-list') {
+      const rows = (value as Row[] | undefined) ?? [];
+      const item = (field.itemLabel ?? 'row').toLowerCase();
+      for (const sub of field.itemFields ?? []) {
+        if (sub.required && rows.some((row) => !row?.[sub.key]?.trim())) {
+          return { key: field.key, message: `Every ${item} needs a ${sub.label.toLowerCase()}` };
+        }
+      }
+      if (field.required && !rows.some((row) => rowHasContent(field, row))) {
+        return { key: field.key, message: `Add at least one ${item}` };
+      }
+      continue;
+    }
+
+    if (!field.required) continue;
     const missing =
       value === undefined ||
       value === null ||
-      value === '' ||
+      (typeof value === 'string' && value.trim() === '') ||
       (Array.isArray(value) && value.length === 0) ||
       (Array.isArray(value) && value.every((entry) => !entry));
     if (missing) return { key: field.key, message: `${field.label} is required` };
@@ -64,9 +114,7 @@ export function cleanPayload(fields: MasterField[], values: Record<string, unkno
     if (field.type === 'string-list') {
       payload[field.key] = ((value as string[]) ?? []).map((entry) => entry?.trim()).filter(Boolean);
     } else if (field.type === 'object-list') {
-      payload[field.key] = ((value as Record<string, string>[]) ?? []).filter((row) =>
-        Object.values(row).some((entry) => typeof entry === 'string' && entry.trim().length > 0)
-      );
+      payload[field.key] = ((value as Row[]) ?? []).filter((row) => rowHasContent(field, row));
     } else if (field.type === 'number') {
       payload[field.key] = value === '' || value === null || value === undefined ? undefined : Number(value);
     } else {
@@ -82,11 +130,17 @@ export function MasterFieldInput({
   value,
   onChange,
   error,
+  onCreateReference,
+  unavailable,
 }: {
   field: MasterField;
   value: unknown;
   onChange: (value: unknown) => void;
   error?: string;
+  /** Opens the referenced master's create form — the web form's `+` button. */
+  onCreateReference?: () => void;
+  /** Reference values that cannot be picked, with the reason shown beside each. */
+  unavailable?: Record<string, string>;
 }) {
   const theme = useTheme();
 
@@ -132,15 +186,16 @@ export function MasterFieldInput({
   }
 
   if (field.type === 'object-list') {
-    const rows = (value as Record<string, string>[]) ?? [];
-    const blankRow = Object.fromEntries((field.itemFields ?? []).map((sub) => [sub.key, '']));
+    const rows = (value as Row[]) ?? [];
+    // A required list keeps at least one row; removing the last would leave nothing to fill.
+    const removable = !field.required || rows.length > 1;
 
     return (
       <Field label={field.label} required={field.required} error={error} hint={field.hint}>
         <Animated.View layout={LinearTransition.duration(180)} style={{ gap: theme.spacing.md }}>
           {rows.map((row, index) => (
             <Animated.View
-              key={index}
+              key={(field.rowId && row[field.rowId]) || index}
               entering={FadeIn.duration(160)}
               exiting={FadeOut.duration(120)}
               style={{
@@ -154,13 +209,15 @@ export function MasterFieldInput({
                 <Text variant="label" tone="muted">
                   {(field.itemLabel ?? 'Item').toUpperCase()} {index + 1}
                 </Text>
-                <IconButton
-                  icon="trash-outline"
-                  tone="danger"
-                  size={30}
-                  accessibilityLabel={`Remove ${field.itemLabel ?? 'item'} ${index + 1}`}
-                  onPress={() => onChange(rows.filter((_, i) => i !== index))}
-                />
+                {removable && (
+                  <IconButton
+                    icon="trash-outline"
+                    tone="danger"
+                    size={30}
+                    accessibilityLabel={`Remove ${field.itemLabel ?? 'item'} ${index + 1}`}
+                    onPress={() => onChange(rows.filter((_, i) => i !== index))}
+                  />
+                )}
               </View>
               {(field.itemFields ?? []).map((sub) => (
                 <Input
@@ -180,7 +237,7 @@ export function MasterFieldInput({
           ))}
           <AddRowButton
             label={`Add ${field.itemLabel?.toLowerCase() ?? 'row'}`}
-            onPress={() => onChange([...rows, { ...blankRow }])}
+            onPress={() => onChange([...rows, blankRow(field)])}
           />
         </Animated.View>
       </Field>
@@ -198,6 +255,7 @@ export function MasterFieldInput({
           title={field.label}
           error={Boolean(error)}
           placeholder={field.placeholder}
+          onCreate={onCreateReference}
         />
       </Field>
     );
@@ -213,6 +271,8 @@ export function MasterFieldInput({
           title={field.label}
           error={Boolean(error)}
           placeholder={field.placeholder}
+          unavailable={unavailable}
+          onCreate={onCreateReference}
         />
       </Field>
     );
@@ -220,9 +280,7 @@ export function MasterFieldInput({
 
   // ------------------------------------------------------------ fixed choices
   if (field.type === 'options') {
-    // A field with no explicit options is the state list — the only long,
-    // fully static choice set in the masters.
-    const options = field.options ?? STATES;
+    const options = field.options ?? [];
 
     if (field.multiple) {
       const selected = (value as string[]) ?? [];

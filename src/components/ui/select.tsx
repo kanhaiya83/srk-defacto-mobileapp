@@ -323,10 +323,13 @@ export function MultiSelect({
           }
           renderItem={({ item }) => {
             const isSelected = values.includes(item.value);
+            // A disabled option can still be un-ticked if it was already chosen.
+            const locked = Boolean(item.disabled) && !isSelected;
             return (
               <Pressable
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: isSelected }}
+                accessibilityState={{ checked: isSelected, disabled: locked }}
+                disabled={locked}
                 onPress={() => toggle(item.value)}
                 style={({ pressed }) => [
                   styles.option,
@@ -336,6 +339,7 @@ export function MultiSelect({
                     paddingHorizontal: theme.spacing.md,
                     paddingVertical: theme.spacing.md,
                     gap: theme.spacing.md,
+                    opacity: locked ? 0.4 : 1,
                   },
                 ]}
               >
