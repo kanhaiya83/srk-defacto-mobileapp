@@ -1,5 +1,31 @@
-import type { Lot, PreLot, PreLotAllocation } from '@/api/operations-api';
+import type { Lot, PreLot, PreLotAllocation, StockLedgerEntry } from '@/api/operations-api';
+import type { useMasterLookups } from '@/features/operations/lookups';
 import { refId } from '@/lib/format';
+
+type Lookups = ReturnType<typeof useMasterLookups>;
+
+const SOURCE_LABELS: Record<string, string> = {
+  INWARD: 'Inward',
+  LOT_OUTPUT: 'Lot output',
+  TRANSFER: 'Transfer',
+  INITIAL_STOCK: 'Opening stock',
+};
+
+/** "Inward AT-1", "Lot output 4-1" — how a stock entry is named everywhere. */
+export const stockEntryTitle = (entryNo?: string | null, sourceType?: string | null) =>
+  `${SOURCE_LABELS[sourceType ?? 'INWARD'] ?? 'Stock'} ${entryNo ?? '—'}`;
+
+/** Grade · location / sub-location · company — what tells two entries apart. */
+export const stockEntrySubtitle = (entry: StockLedgerEntry, lookups: Lookups) => {
+  const locationId = refId(entry.location_id);
+  return [
+    entry.grade_id?.grade_name ?? lookups.gradeName(refId(entry.grade_id)),
+    `${lookups.locationName(locationId)} / ${lookups.subLocationName(locationId, entry.sub_location_id)}`,
+    entry.company_id?.company_name ?? lookups.companyName(refId(entry.company_id)),
+  ]
+    .filter((part) => part && part !== '—' && part !== '— / —')
+    .join(' · ');
+};
 
 type Allocation = PreLotAllocation & { consumed_weight_by_lots?: number };
 

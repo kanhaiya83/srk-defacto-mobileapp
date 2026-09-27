@@ -11,7 +11,7 @@ import { DetailRow, ProgressBar, StatTile } from '@/components/ui/misc';
 import { ActionBar, Body, Header, Screen } from '@/components/ui/screen';
 import { Text } from '@/components/ui/text';
 import { useMasterLookups } from '@/features/operations/lookups';
-import { lotsOf, preLotTotals } from '@/features/operations/prelot';
+import { lotsOf, preLotTotals, stockEntryTitle } from '@/features/operations/prelot';
 import { useModulePermissions, usePermissions } from '@/hooks/use-permissions';
 import { formatCurrency, formatDate, formatNumber, refId } from '@/lib/format';
 import { useTheme } from '@/theme';
@@ -90,7 +90,7 @@ export default function PreLotDetailScreen() {
         {totals.entries.map((entry) => (
           <RecordCard
             key={entry.stockId}
-            title={`${entry.sourceType === 'LOT_OUTPUT' ? 'Lot output' : 'Inward'} ${entry.entryNo}`}
+            title={stockEntryTitle(entry.entryNo, entry.sourceType)}
             subtitle={entry.rows.map((row) => `${formatNumber(row.bags_allocated)} bags on ${formatDate(row.date)}`).join(' · ')}
             badge={entry.remainingBags <= 0 ? { label: 'Used up', tone: 'neutral' } : undefined}
             fields={[
@@ -142,7 +142,7 @@ export default function PreLotDetailScreen() {
               icon="cube-outline"
               style={{ flex: 2 }}
               disabled={!canCreateLot}
-              onPress={() => router.push(`/operations/lot?prelot=${preLot._id}` as never)}
+              onPress={() => router.push(`/operations/lot/form?prelot=${preLot._id}` as never)}
             />
           )}
         </ActionBar>

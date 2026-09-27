@@ -29,6 +29,7 @@ import {
   type StockLine,
   type StockSource,
 } from '@/features/operations/stock-lines';
+import { stockEntrySubtitle, stockEntryTitle } from '@/features/operations/prelot';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useSyncedState } from '@/hooks/use-synced-state';
 import { formatCurrency, formatNumber, refId, today } from '@/lib/format';
@@ -139,18 +140,10 @@ export default function PreLotFormScreen() {
     () =>
       (ledger.data ?? []).map((entry) => {
         const held = heldHere.get(entry._id) ?? { bags: 0, weight: 0 };
-        const locationId = refId(entry.location_id);
         return {
           id: entry._id,
-          title: `Entry ${entry.entry_no}`,
-          subtitle: [
-            lookups.gradeName(refId(entry.grade_id)),
-            `${lookups.locationName(locationId)} / ${lookups.subLocationName(locationId, entry.sub_location_id)}`,
-            entry.company_id?.company_name ?? lookups.companyName(refId(entry.company_id)),
-            entry.source_type === 'LOT_OUTPUT' ? 'Lot output' : entry.source_type === 'INWARD' ? 'Raw material' : null,
-          ]
-            .filter((part) => part && part !== '—')
-            .join(' · '),
+          title: stockEntryTitle(entry.entry_no, entry.source_type),
+          subtitle: stockEntrySubtitle(entry, lookups),
           capBags: (entry.available_bags || 0) + held.bags,
           capWeight: (entry.available_weight || 0) + held.weight,
           ratePerKg: entry.rate_per_kg,

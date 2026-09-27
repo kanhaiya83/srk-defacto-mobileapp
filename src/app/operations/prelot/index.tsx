@@ -157,7 +157,7 @@ export default function PreLotListScreen() {
             icon: 'cube-outline',
             disabled: !can('lot:create') || !menuRow || menuRow.totals.remainingBags <= 0,
             disabledReason: !can('lot:create') ? 'Your role cannot create lots' : 'No stock left for a lot',
-            onPress: () => menuFor && router.push(`/operations/lot?prelot=${menuFor._id}` as never),
+            onPress: () => menuFor && router.push(`/operations/lot/form?prelot=${menuFor._id}` as never),
           },
           {
             label: 'Edit',

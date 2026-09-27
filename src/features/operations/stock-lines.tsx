@@ -10,7 +10,7 @@ import { Callout, SearchBar } from '@/components/ui/misc';
 import { Sheet, SheetBody } from '@/components/ui/sheet';
 import { Text } from '@/components/ui/text';
 import { toast } from '@/components/ui/toast';
-import { formatNumber } from '@/lib/format';
+import { formatDate, formatNumber } from '@/lib/format';
 import { objectId } from '@/lib/object-id';
 import { useTheme } from '@/theme';
 
@@ -212,7 +212,7 @@ export function StockLinesEditor({
                 )}
                 {(withDate || locked) && (
                   <Text variant="caption" tone="faint">
-                    {[withDate ? line.date : null, locked ? `${formatNumber(line.floorBags)} bags used by lots` : null]
+                    {[withDate ? formatDate(line.date) : null, locked ? `${formatNumber(line.floorBags)} bags used by lots` : null]
                       .filter(Boolean)
                       .join(' · ')}
                   </Text>
