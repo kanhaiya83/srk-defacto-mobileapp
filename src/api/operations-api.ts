@@ -774,9 +774,12 @@ export const useCreateLot = () => {
   return useMutation({
     mutationFn: (data: Omit<Lot, '_id' | 'lot_no' | 'total_input_bags' | 'avg_input_rate' | 'total_output_bags' | 'total_output_weight' | 'total_output_amount' | 'avg_output_rate_per_kg' | 'createdAt' | 'updatedAt'>) =>
       request.post<Lot>('/api/lots', data).then(res => res.data),
+    // A lot draws on its pre-lot and may lock its machine.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [LOTS] });
+      queryClient.invalidateQueries({ queryKey: [PRE_LOTS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: ['machines'] });
     },
   });
 };
@@ -788,7 +791,9 @@ export const useUpdateLot = () => {
       request.put<Lot>(`/api/lots/${id}`, data).then(res => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [LOTS] });
+      queryClient.invalidateQueries({ queryKey: [PRE_LOTS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: ['machines'] });
     },
   });
 };
