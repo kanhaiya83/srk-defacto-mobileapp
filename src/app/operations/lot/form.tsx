@@ -90,8 +90,11 @@ export default function LotFormScreen() {
 
   const preLotQuery = usePreLot(form.prelot_id);
   const preLot = preLotQuery.data;
+  // Only for the inputs' grade and location; skipped for roles without inventory access.
   const ledger = useStockLedger(
-    preLot ? { company_group_id: refId(preLot.company_group_id), commodity_id: refId(preLot.commodity_id) } : {}
+    preLot && can('inventory:read')
+      ? { company_group_id: refId(preLot.company_group_id), commodity_id: refId(preLot.commodity_id) }
+      : {}
   );
 
   const sources = useMemo(

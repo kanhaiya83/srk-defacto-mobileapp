@@ -68,6 +68,8 @@ export interface StockTotals extends StockBreakdown {
   total_bags: number;
   total_weight: number;
   total_value: number;
+  /** Available weight at each entry's own rate. */
+  available_value: number;
 }
 
 export function computeTotals(entries: StockLedgerEntry[]): StockTotals {
@@ -75,6 +77,7 @@ export function computeTotals(entries: StockLedgerEntry[]): StockTotals {
     total_bags: 0,
     total_weight: 0,
     total_value: 0,
+    available_value: 0,
     available_bags: 0,
     available_weight: 0,
     prelot_bags: 0,
@@ -96,6 +99,7 @@ export function computeTotals(entries: StockLedgerEntry[]): StockTotals {
     totals.total_value += entry.original_amount;
     totals.available_bags += breakdown.available_bags;
     totals.available_weight += breakdown.available_weight;
+    totals.available_value += breakdown.available_weight * (entry.rate_per_kg || 0);
     totals.prelot_bags += breakdown.prelot_bags;
     totals.prelot_weight += breakdown.prelot_weight;
     totals.preoutward_bags += breakdown.preoutward_bags;
@@ -113,14 +117,22 @@ export function computeTotals(entries: StockLedgerEntry[]): StockTotals {
 
 export type SourceFilter = 'ALL' | 'INWARD' | 'LOT_OUTPUT' | 'TRANSFER' | 'INITIAL_STOCK';
 export type StatusFilter = 'ALL' | 'AVAILABLE' | 'PRELOT' | 'PREOUTWARD' | 'CONSUMED' | 'DISPATCHED' | 'TRANSFERRED';
+export type AgeFilter = 'ALL' | '0-30' | '31-60' | '61-90' | '90+';
 
 export interface StockFilterState {
   source: SourceFilter;
   status: StatusFilter;
   commodity: string;
   grade: string;
-  location: string;
+  /** A company, or a company group — lot output and transfers belong to a group. */
+  company: string;
   companyGroup: string;
+  location: string;
+  subLocation: string;
+  bagType: string;
+  age: AgeFilter;
+  /** Keep only entries with a data problem (see `entryIssues`). */
+  issues: boolean;
 }
 
 export const defaultStockFilters: StockFilterState = {
@@ -128,17 +140,70 @@ export const defaultStockFilters: StockFilterState = {
   status: 'AVAILABLE',
   commodity: '',
   grade: '',
-  location: '',
+  company: '',
   companyGroup: '',
+  location: '',
+  subLocation: '',
+  bagType: '',
+  age: 'ALL',
+  issues: false,
 };
+
+/** Whole days since the entry was created, or null without a timestamp. */
+export function entryAgeDays(entry: StockLedgerEntry): number | null {
+  if (!entry.createdAt) return null;
+  const created = new Date(entry.createdAt).getTime();
+  if (Number.isNaN(created)) return null;
+  return Math.max(0, Math.floor((Date.now() - created) / 86_400_000));
+}
+
+export function ageBucket(days: number | null): Exclude<AgeFilter, 'ALL'> | null {
+  if (days === null) return null;
+  if (days <= 30) return '0-30';
+  if (days <= 60) return '31-60';
+  if (days <= 90) return '61-90';
+  return '90+';
+}
+
+/** Rupee value of what is still available, at the entry's own rate. */
+export const availableValue = (entry: StockLedgerEntry) =>
+  getStockBreakdown(entry).available_weight * (entry.rate_per_kg || 0);
+
+/**
+ * Numbers that look wrong — the web's data-quality check. Available stock is
+ * clamped at zero, which hides over-allocation, so the raw figures are used.
+ */
+export function entryIssues(entry: StockLedgerEntry): string[] {
+  const issues: string[] = [];
+  const usedBags =
+    entry.allocated_bags + entry.outward_allocated_bags + entry.consumed_bags + entry.outward_bags + (entry.transferred_bags || 0);
+  const usedWeight =
+    entry.allocated_weight +
+    entry.outward_allocated_weight +
+    entry.consumed_weight +
+    entry.outward_weight +
+    (entry.transferred_weight || 0);
+  if (usedBags > entry.original_bags + 0.001) issues.push('More bags used than it held');
+  if (usedWeight > entry.original_weight + 0.01) issues.push('More weight used than it held');
+  if (!entry.sub_location_id) issues.push('No sub-location');
+  if (!entry.rate_per_kg || entry.rate_per_kg <= 0) issues.push('No rate');
+  return issues;
+}
 
 export function applyStockFilters(entries: StockLedgerEntry[], filters: StockFilterState): StockLedgerEntry[] {
   return entries.filter((entry) => {
     if (filters.source !== 'ALL' && entry.source_type !== filters.source) return false;
     if (filters.commodity && refId(entry.commodity_id) !== filters.commodity) return false;
     if (filters.grade && refId(entry.grade_id) !== filters.grade) return false;
-    if (filters.location && refId(entry.location_id) !== filters.location) return false;
+    if (filters.company && refId(entry.company_id) !== filters.company && refId(entry.company_group_id) !== filters.company) {
+      return false;
+    }
     if (filters.companyGroup && refId(entry.company_group_id) !== filters.companyGroup) return false;
+    if (filters.location && refId(entry.location_id) !== filters.location) return false;
+    if (filters.subLocation && entry.sub_location_id !== filters.subLocation) return false;
+    if (filters.bagType && refId(entry.bag_type_id) !== filters.bagType) return false;
+    if (filters.age !== 'ALL' && ageBucket(entryAgeDays(entry)) !== filters.age) return false;
+    if (filters.issues && entryIssues(entry).length === 0) return false;
 
     if (filters.status !== 'ALL') {
       const breakdown = getStockBreakdown(entry);
@@ -156,6 +221,11 @@ export function applyStockFilters(entries: StockLedgerEntry[], filters: StockFil
     return true;
   });
 }
+
+/** Filters that differ from the defaults. */
+export const activeFilterCount = (filters: StockFilterState) =>
+  (Object.keys(defaultStockFilters) as (keyof StockFilterState)[]).filter((key) => filters[key] !== defaultStockFilters[key])
+    .length;
 
 export interface StockGroup {
   key: string;
@@ -184,12 +254,12 @@ export function groupStock(
     const { key, label: title, sublabel } = label(entry);
     const breakdown = getStockBreakdown(entry);
     const existing = groups.get(key);
-    const weightShare = entry.original_weight > 0 ? breakdown.available_weight / entry.original_weight : 0;
+    const value = breakdown.available_weight * (entry.rate_per_kg || 0);
 
     if (existing) {
       existing.bags += breakdown.available_bags;
       existing.weight += breakdown.available_weight;
-      existing.value += entry.original_amount * weightShare;
+      existing.value += value;
       existing.entries.push(entry);
     } else {
       groups.set(key, {
@@ -198,7 +268,7 @@ export function groupStock(
         sublabel,
         bags: breakdown.available_bags,
         weight: breakdown.available_weight,
-        value: entry.original_amount * weightShare,
+        value,
         entries: [entry],
       });
     }
