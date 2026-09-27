@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Pressable, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { authApi } from '@/api/auth-api';
@@ -56,92 +57,92 @@ export default function LoginScreen() {
 
   return (
     <Screen edges={['top', 'bottom']}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: 'center',
-            padding: theme.spacing.xl,
-            gap: theme.spacing.xxl,
-          }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Animated.View entering={FadeInDown.duration(400)} style={{ gap: theme.spacing.md }}>
-            <View
-              style={{
-                width: 54,
-                height: 54,
-                borderRadius: theme.radius.lg,
-                backgroundColor: theme.colors.primary,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="cube" size={26} color={theme.colors.primaryText} />
-            </View>
-            <View style={{ gap: 4 }}>
-              <Text variant="display">Defacto</Text>
-              <Text variant="body" tone="muted">
-                Sign in to manage inward, processing and dispatch.
-              </Text>
-            </View>
-          </Animated.View>
+      {/* Keeps the password field and Sign in above the keyboard on both platforms. */}
+      <KeyboardAwareScrollView
+        bottomOffset={96}
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: 'center',
+          padding: theme.spacing.xl,
+          gap: theme.spacing.xxl,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Animated.View entering={FadeInDown.duration(400)} style={{ gap: theme.spacing.md }}>
+          <View
+            style={{
+              width: 54,
+              height: 54,
+              borderRadius: theme.radius.lg,
+              backgroundColor: theme.colors.primary,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Ionicons name="cube" size={26} color={theme.colors.primaryText} />
+          </View>
+          <View style={{ gap: 4 }}>
+            <Text variant="display">Defacto</Text>
+            <Text variant="body" tone="muted">
+              Sign in to manage inward, processing and dispatch.
+            </Text>
+          </View>
+        </Animated.View>
 
-          <Animated.View entering={FadeInDown.delay(80).duration(400)} style={{ gap: theme.spacing.lg }}>
-            <Field label="Email or username">
-              <Input
-                value={identifier}
-                onChangeText={setIdentifier}
-                placeholder="you@company.com"
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="username"
-                keyboardType="email-address"
-                returnKeyType="next"
-                editable={!submitting}
-                leftIcon="person-outline"
-                onSubmitEditing={() => passwordRef.current?.focus()}
-              />
-            </Field>
-
-            <Field label="Password">
-              <PasswordInput
-                ref={passwordRef}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="••••••••"
-                autoComplete="current-password"
-                returnKeyType="go"
-                editable={!submitting}
-                leftIcon="lock-closed-outline"
-                onSubmitEditing={handleSubmit}
-              />
-            </Field>
-
-            {!!error && <Callout tone="danger" title="Sign-in failed" description={error} />}
-
-            <Button
-              label={submitting ? 'Signing in…' : 'Sign in'}
-              size="lg"
-              fullWidth
-              loading={submitting}
-              disabled={!canSubmit}
-              onPress={handleSubmit}
+        <Animated.View entering={FadeInDown.delay(80).duration(400)} style={{ gap: theme.spacing.lg }}>
+          <Field label="Email or username">
+            <Input
+              value={identifier}
+              onChangeText={setIdentifier}
+              placeholder="you@company.com"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="username"
+              keyboardType="email-address"
+              returnKeyType="next"
+              editable={!submitting}
+              leftIcon="person-outline"
+              onSubmitEditing={() => passwordRef.current?.focus()}
             />
+          </Field>
 
-            <Pressable
-              accessibilityRole="link"
-              onPress={() => router.push('/forgot-password')}
-              hitSlop={8}
-              style={{ alignSelf: 'center' }}
-            >
-              <Text variant="label" tone="primary">
-                Forgot password?
-              </Text>
-            </Pressable>
-          </Animated.View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          <Field label="Password">
+            <PasswordInput
+              ref={passwordRef}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••••"
+              autoComplete="current-password"
+              returnKeyType="go"
+              editable={!submitting}
+              leftIcon="lock-closed-outline"
+              onSubmitEditing={handleSubmit}
+            />
+          </Field>
+
+          {!!error && <Callout tone="danger" title="Sign-in failed" description={error} />}
+
+          <Button
+            label={submitting ? 'Signing in…' : 'Sign in'}
+            size="lg"
+            fullWidth
+            loading={submitting}
+            disabled={!canSubmit}
+            onPress={handleSubmit}
+          />
+
+          <Pressable
+            accessibilityRole="link"
+            onPress={() => router.push('/forgot-password')}
+            hitSlop={8}
+            style={{ alignSelf: 'center' }}
+          >
+            <Text variant="label" tone="primary">
+              Forgot password?
+            </Text>
+          </Pressable>
+        </Animated.View>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { AppState, Platform, useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/components/auth/auth-provider';
@@ -54,27 +55,30 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            <ToastProvider>
-              <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-              <AuthProvider>
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    animation: 'slide_from_right',
-                  }}
-                >
-                  <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
-                  <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
-                  <Stack.Screen name="change-password" options={{ animation: 'slide_from_bottom' }} />
-                </Stack>
-              </AuthProvider>
-            </ToastProvider>
-          </ThemeProvider>
-        </QueryClientProvider>
-      </SafeAreaProvider>
+      {/* The app draws edge to edge on Android; the provider must know, or its keyboard maths is off by the bars. */}
+      <KeyboardProvider statusBarTranslucent navigationBarTranslucent preserveEdgeToEdge>
+        <SafeAreaProvider>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider>
+              <ToastProvider>
+                <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+                <AuthProvider>
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      animation: 'slide_from_right',
+                    }}
+                  >
+                    <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
+                    <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+                    <Stack.Screen name="change-password" options={{ animation: 'slide_from_bottom' }} />
+                  </Stack>
+                </AuthProvider>
+              </ToastProvider>
+            </ThemeProvider>
+          </QueryClientProvider>
+        </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

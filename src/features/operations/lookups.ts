@@ -15,7 +15,11 @@ import {
   useWeighBridges,
 } from '@/api/masters-api';
 import type { Option } from '@/components/ui/select';
+import { usePermissions } from '@/hooks/use-permissions';
 import { EM_DASH } from '@/lib/format';
+
+const byLabel = (a: Option, b: Option) =>
+  a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true });
 
 /**
  * Master lookups for the operations screens.
@@ -23,36 +27,42 @@ import { EM_DASH } from '@/lib/format';
  * Operations forms all reach for the same handful of collections, and every one
  * of them is small and cached by React Query — so they are fetched once here
  * and shared, rather than each screen assembling its own set of hooks.
+ *
+ * A master the role cannot read is never requested: every refused request
+ * raises an "Access denied" toast, and a screen that needs only three of these
+ * lists must not fail loudly over the other nine. Options are alphabetical,
+ * as on the web.
  */
 export function useMasterLookups() {
-  const commodities = useCommodities();
-  const grades = useGrades();
-  const bagTypes = useBagTypes();
-  const bagGrades = useBagGrades();
-  const bagTypeConfigs = useBagTypeConfigurations();
-  const locations = useWarehouseLocations();
-  const sourceLocations = useSourceLocations();
-  const weighBridges = useWeighBridges();
-  const companies = useCompanies();
-  const companyGroups = useCompanyGroups();
-  const vendors = useVendors();
-  const machines = useMachines();
+  const { can } = usePermissions();
+  const commodities = useCommodities(can('commodity:read'));
+  const grades = useGrades(can('grade:read'));
+  const bagTypes = useBagTypes(can('bag-type:read'));
+  const bagGrades = useBagGrades(can('bag-grade:read'));
+  const bagTypeConfigs = useBagTypeConfigurations(can('bag-type-config:read'));
+  const locations = useWarehouseLocations(can('warehouse-location:read'));
+  const sourceLocations = useSourceLocations(can('source-location:read'));
+  const weighBridges = useWeighBridges(can('weigh-bridge:read'));
+  const companies = useCompanies(can('company:read'));
+  const companyGroups = useCompanyGroups(can('company-group:read'));
+  const vendors = useVendors(can('vendor:read'));
+  const machines = useMachines(can('machine:read'));
 
   return useMemo(() => {
     const commodityOptions: Option[] = (commodities.data ?? []).map((item) => ({
       value: item._id,
       label: item.commodity_name,
-    }));
+    })).sort(byLabel);
 
     const gradeOptions: Option[] = (grades.data ?? []).map((item) => ({
       value: item._id,
       label: item.grade_name,
-    }));
+    })).sort(byLabel);
 
     const bagTypeOptions: Option[] = (bagTypes.data ?? []).map((item) => ({
       value: item._id,
       label: item.bag_type_name,
-    }));
+    })).sort(byLabel);
 
     /** "PP-A grade-50kg · tare 0.12 kg" — the label operators recognise. */
     const bagConfigOptions: Option[] = (bagTypeConfigs.data ?? []).map((config) => {
@@ -64,53 +74,57 @@ export function useMasterLookups() {
         label: parts.join('-'),
         description: `Tare ${config.bag_weight ?? 0} kg`,
       };
-    });
+    }).sort(byLabel);
 
     const locationOptions: Option[] = (locations.data ?? []).map((item) => ({
       value: item._id,
       label: item.location_name,
       description: `${item.sub_locations?.length ?? 0} sub-locations`,
-    }));
+    })).sort(byLabel);
 
     const subLocationOptionsFor = (locationId?: string | null): Option[] => {
       const location = (locations.data ?? []).find((item) => item._id === locationId);
-      return (location?.sub_locations ?? []).map((sub) => ({ value: sub.id, label: sub.name }));
+      // Kept in the order the warehouse defines them. A row saved without an id
+      // (older app builds) cannot be referenced, so it is not offered.
+      return (location?.sub_locations ?? [])
+        .filter((sub) => sub.id)
+        .map((sub) => ({ value: sub.id, label: sub.name }));
     };
 
     const sourceLocationOptions: Option[] = (sourceLocations.data ?? []).map((item) => ({
       value: item._id,
       label: item.source_location_name,
-    }));
+    })).sort(byLabel);
 
     const weighBridgeOptions: Option[] = (weighBridges.data ?? []).map((item) => ({
       value: item._id,
       label: item.name,
-    }));
+    })).sort(byLabel);
 
     const companyOptions: Option[] = (companies.data ?? []).map((item) => ({
       value: item._id,
       label: item.company_name,
       description: item.gst_no || undefined,
-    }));
+    })).sort(byLabel);
 
     const companyGroupOptions: Option[] = (companyGroups.data ?? []).map((item) => ({
       value: item._id,
       label: item.group_name,
       description: `${item.company_ids?.length ?? 0} companies`,
-    }));
+    })).sort(byLabel);
 
     const vendorOptions: Option[] = (vendors.data ?? []).map((item) => ({
       value: item._id,
       label: item.vendor_name,
       description: (item.category ?? []).join(' · ') || undefined,
-    }));
+    })).sort(byLabel);
 
     const machineOptions: Option[] = (machines.data ?? []).map((item) => ({
       value: item._id,
       label: item.machine_name,
       description: item.locked_in_lot ? `Locked in lot ${item.locked_in_lot.lot_no}` : undefined,
       disabled: Boolean(item.locked_in_lot),
-    }));
+    })).sort(byLabel);
 
     /** Resolves an id to its display label; falls back to an em dash. */
     const nameFrom = (options: Option[], id?: string | null) =>
@@ -140,7 +154,8 @@ export function useMasterLookups() {
       gradeOptionsFor: (commodityId?: string | null): Option[] =>
         (grades.data ?? [])
           .filter((grade) => grade.commodity_id === commodityId)
-          .map((grade) => ({ value: grade._id, label: grade.grade_name })),
+          .map((grade) => ({ value: grade._id, label: grade.grade_name }))
+          .sort(byLabel),
       bagTypeOptions,
       bagConfigOptions,
       bagConfigOptionsFor: (bagTypeId?: string | null): Option[] =>

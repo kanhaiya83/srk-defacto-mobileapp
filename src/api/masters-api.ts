@@ -219,8 +219,9 @@ export const useDeleteAgent = () => {
   });
 };
 
-export const useBagTypes = () => {
+export const useBagTypes = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [BAG_TYPES],
     queryFn: () => request.get<BagType[]>('/api/bag-types').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -258,8 +259,9 @@ export const useDeleteBagType = () => {
   });
 };
 
-export const useBagGrades = () => {
+export const useBagGrades = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [BAG_GRADES],
     queryFn: () => request.get<BagGrade[]>('/api/bag-grades').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -297,8 +299,9 @@ export const useDeleteBagGrade = () => {
   });
 };
 
-export const useBagTypeConfigurations = () => {
+export const useBagTypeConfigurations = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [BAG_TYPE_CONFIGURATIONS],
     queryFn: () => request.get<BagTypeConfiguration[]>('/api/bag-type-configurations').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -336,8 +339,9 @@ export const useDeleteBagTypeConfiguration = () => {
   });
 };
 
-export const useCommodities = () => {
+export const useCommodities = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [COMMODITIES],
     queryFn: () => request.get<Commodity[]>('/api/commodities').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -375,8 +379,9 @@ export const useDeleteCommodity = () => {
   });
 };
 
-export const useCompanies = () => {
+export const useCompanies = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [COMPANIES],
     queryFn: () => request.get<Company[]>('/api/companies').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -414,8 +419,9 @@ export const useDeleteCompany = () => {
   });
 };
 
-export const useCompanyGroups = () => {
+export const useCompanyGroups = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [COMPANY_GROUPS],
     queryFn: () => request.get<CompanyGroup[]>('/api/company-groups').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -453,8 +459,9 @@ export const useDeleteCompanyGroup = () => {
   });
 };
 
-export const useGrades = () => {
+export const useGrades = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [GRADES],
     queryFn: () => request.get<Grade[]>('/api/grades').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -492,8 +499,9 @@ export const useDeleteGrade = () => {
   });
 };
 
-export const useSourceLocations = () => {
+export const useSourceLocations = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [SOURCE_LOCATIONS],
     queryFn: () => request.get<SourceLocation[]>('/api/source-locations').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -531,8 +539,9 @@ export const useDeleteSourceLocation = () => {
   });
 };
 
-export const useVendors = () => {
+export const useVendors = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [VENDORS],
     queryFn: () => request.get<Vendor[]>('/api/vendors').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -609,8 +618,9 @@ export const useDeleteVendorBankDetails = () => {
   });
 };
 
-export const useWarehouseLocations = () => {
+export const useWarehouseLocations = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [WAREHOUSE_LOCATIONS],
     queryFn: () => request.get<WarehouseLocation[]>('/api/warehouse-locations').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -648,8 +658,9 @@ export const useDeleteWarehouseLocation = () => {
   });
 };
 
-export const useMachines = () => {
+export const useMachines = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [MACHINES],
     queryFn: () => request.get<Machine[]>('/api/machines').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });
@@ -687,8 +698,9 @@ export const useDeleteMachine = () => {
   });
 };
 
-export const useWeighBridges = () => {
+export const useWeighBridges = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [WEIGH_BRIDGES],
     queryFn: () => request.get<WeighBridge[]>('/api/weigh-bridges').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });

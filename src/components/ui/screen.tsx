@@ -1,16 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { type ReactNode } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  type ScrollViewProps,
-  type ViewStyle,
-} from 'react-native';
+import { Pressable, StyleSheet, View, type ScrollViewProps, type ViewStyle } from 'react-native';
+import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from './text';
@@ -120,7 +112,19 @@ export function Header({
   );
 }
 
-/** Scrolling body with keyboard handling and consistent gutters. */
+/**
+ * Room kept between the keyboard and the focused field: the action bar rides
+ * on top of the keyboard, so a field must clear the bar too, not just the keys.
+ */
+const FOCUSED_FIELD_CLEARANCE = 88;
+
+/**
+ * Scrolling form body.
+ *
+ * Scrolls the focused field into view above the keyboard (and above the
+ * action bar riding on it) on both platforms. A plain KeyboardAvoidingView did
+ * neither on iOS, and fields near the bottom of a form ended up behind the keys.
+ */
 export function Body({
   children,
   contentContainerStyle,
@@ -129,28 +133,23 @@ export function Body({
 }: ScrollViewProps & { children: ReactNode; gap?: number }) {
   const theme = useTheme();
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+    <KeyboardAwareScrollView
+      bottomOffset={FOCUSED_FIELD_CLEARANCE}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={[
+        {
+          padding: theme.spacing.lg,
+          paddingBottom: theme.spacing.xxxl,
+          gap: gap ?? theme.spacing.lg,
+        },
+        contentContainerStyle,
+      ]}
+      {...rest}
     >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          {
-            padding: theme.spacing.lg,
-            paddingBottom: theme.spacing.xxxl,
-            gap: gap ?? theme.spacing.lg,
-          },
-          contentContainerStyle,
-        ]}
-        {...rest}
-      >
-        {children}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {children}
+    </KeyboardAwareScrollView>
   );
 }
 
@@ -158,26 +157,31 @@ export function Body({
  * Sticky action bar pinned to the bottom of a form.
  *
  * Long ERP forms scroll well past a screen; keeping Save reachable without
- * scrolling back is the difference between one tap and ten.
+ * scrolling back is the difference between one tap and ten. It rides on top
+ * of the keyboard, so Save stays visible while typing.
  */
 export function ActionBar({ children }: { children: ReactNode }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(insets.bottom, theme.spacing.md);
   return (
-    <View
-      style={{
-        flexDirection: 'row',
-        gap: theme.spacing.md,
-        paddingHorizontal: theme.spacing.lg,
-        paddingTop: theme.spacing.md,
-        paddingBottom: Math.max(insets.bottom, theme.spacing.md),
-        backgroundColor: theme.colors.surface,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border,
-      }}
-    >
-      {children}
-    </View>
+    // With the keyboard up the home-indicator gap sits under the keys, so drop it.
+    <KeyboardStickyView offset={{ closed: 0, opened: bottomPadding - theme.spacing.md }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: theme.spacing.md,
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: theme.spacing.md,
+          paddingBottom: bottomPadding,
+          backgroundColor: theme.colors.surface,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: theme.colors.border,
+        }}
+      >
+        {children}
+      </View>
+    </KeyboardStickyView>
   );
 }
 

@@ -63,33 +63,39 @@ export function RecordCard({
       <View style={{ flexDirection: 'row' }}>
         {accentColor && <View style={{ width: 3, backgroundColor: accentColor }} />}
         <View style={{ flex: 1, padding: theme.spacing.lg, gap: theme.spacing.md }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: theme.spacing.md }}>
-            {icon && (
-              <View
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: theme.radius.sm,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: theme.colors.surfaceAlt,
-                }}
-              >
-                <Ionicons name={icon} size={18} color={theme.colors.mutedText} />
-              </View>
-            )}
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text variant="bodyStrong" numberOfLines={1}>
+          <View style={{ gap: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md }}>
+              {icon && (
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: theme.radius.sm,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: theme.colors.surfaceAlt,
+                  }}
+                >
+                  <Ionicons name={icon} size={18} color={theme.colors.mutedText} />
+                </View>
+              )}
+              <Text variant="bodyStrong" numberOfLines={1} style={{ flex: 1 }}>
                 {title}
               </Text>
-              {!!subtitle && (
-                <Text variant="caption" tone="muted" numberOfLines={1}>
-                  {subtitle}
-                </Text>
-              )}
+              {badge && <Badge label={badge.label} tone={badge.tone} />}
+              {onMenu && <IconButton icon="ellipsis-horizontal" accessibilityLabel="Row actions" onPress={onMenu} size={32} />}
             </View>
-            {badge && <Badge label={badge.label} tone={badge.tone} />}
-            {onMenu && <IconButton icon="ellipsis-horizontal" accessibilityLabel="Row actions" onPress={onMenu} size={32} />}
+            {/* Full width below the title row, so a badge never truncates it. */}
+            {!!subtitle && (
+              <Text
+                variant="caption"
+                tone="muted"
+                numberOfLines={2}
+                style={{ marginLeft: icon ? 36 + theme.spacing.md : 0 }}
+              >
+                {subtitle}
+              </Text>
+            )}
           </View>
 
           {fields.length > 0 && (

@@ -1,14 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { type ReactNode } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -46,7 +39,7 @@ export function Sheet({
   const { height } = useWindowDimensions();
 
   return (
-    <Modal visible={open} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible={open} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <View style={styles.root}>
         <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={StyleSheet.absoluteFill}>
           <Pressable
@@ -57,9 +50,14 @@ export function Sheet({
           />
         </Animated.View>
 
+        {/*
+          keyboard-controller's avoiding view also works inside an Android Modal,
+          where the built-in one did nothing and inputs sat behind the keyboard.
+          The sheet shrinks to the space left above the keys; its body scrolls.
+        */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboardWrap}
+          behavior="padding"
+          style={[styles.keyboardWrap, { paddingTop: insets.top + theme.spacing.lg }]}
           pointerEvents="box-none"
         >
           <Animated.View
@@ -72,6 +70,7 @@ export function Sheet({
                 borderTopLeftRadius: theme.radius.xl,
                 borderTopRightRadius: theme.radius.xl,
                 maxHeight: height * maxHeightRatio,
+                flexShrink: 1,
                 paddingBottom: insets.bottom || theme.spacing.lg,
                 borderTopWidth: theme.dark ? StyleSheet.hairlineWidth : 0,
                 borderColor: theme.colors.border,
@@ -122,6 +121,26 @@ export function Sheet({
         </KeyboardAvoidingView>
       </View>
     </Modal>
+  );
+}
+
+/**
+ * Scrollable sheet content. A sheet shrinks to the space above the keyboard;
+ * content in a plain View would be clipped on a small phone, this scrolls.
+ */
+export function SheetBody({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+  const theme = useTheme();
+  return (
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={[
+        { paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.md, gap: theme.spacing.lg },
+        style,
+      ]}
+    >
+      {children}
+    </ScrollView>
   );
 }
 
@@ -193,7 +212,7 @@ export function ConfirmSheet({
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
-  keyboardWrap: { justifyContent: 'flex-end' },
+  keyboardWrap: { flex: 1, justifyContent: 'flex-end' },
   grabberWrap: { alignItems: 'center', paddingTop: 8, paddingBottom: 6 },
   grabber: { width: 38, height: 4, borderRadius: 2 },
   header: { flexDirection: 'row', alignItems: 'flex-start' },
