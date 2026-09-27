@@ -84,6 +84,7 @@ export function StockLinesEditor({
   defaultDate,
   readOnly,
   noun = 'line',
+  plural = `${noun}s`,
   emptyHint,
   sourcesLoading,
 }: {
@@ -98,6 +99,8 @@ export function StockLinesEditor({
   readOnly?: boolean;
   /** "allocation", "input" — used in labels. */
   noun?: string;
+  /** When "noun + s" is wrong ("entry" → "entries"). */
+  plural?: string;
   emptyHint?: string;
   sourcesLoading?: boolean;
 }) {
@@ -178,7 +181,7 @@ export function StockLinesEditor({
   return (
     <View style={{ gap: theme.spacing.md }}>
       {lines.length === 0 && (
-        <Callout tone="info" title={`No ${noun}s yet`} description={emptyHint ?? 'Add the stock to draw from.'} />
+        <Callout tone="info" title={`No ${plural} yet`} description={emptyHint ?? 'Add the stock to draw from.'} />
       )}
 
       {lines.map((line) => {
