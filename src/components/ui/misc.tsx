@@ -64,7 +64,8 @@ export function Segmented<T extends string>({
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ gap: theme.spacing.sm, paddingRight: theme.spacing.lg }}
-      style={style}
+      // A horizontal ScrollView grows and shrinks by default; a tab bar should do neither.
+      style={[{ flexGrow: 0, flexShrink: 0 }, style]}
     >
       {options.map((option) => {
         const active = option.value === value;
