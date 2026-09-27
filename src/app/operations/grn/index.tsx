@@ -39,7 +39,7 @@ export default function GrnListScreen() {
   const [menuFor, setMenuFor] = useState<GenerateGrnEntry | null>(null);
   const [deleteFor, setDeleteFor] = useState<GenerateGrnEntry | null>(null);
 
-  const entries = list.data ?? [];
+  const entries = useMemo(() => list.data ?? [], [list.data]);
 
   const counts = useMemo(() => {
     const short = entries.filter((grn) => bagsUsedIn(grn) < (grn.total_bags || 0)).length;
@@ -52,10 +52,14 @@ export default function GrnListScreen() {
     return entries.filter((grn) => (filter === 'short' ? isShort(grn) : !isShort(grn)));
   }, [entries, filter]);
 
-  const search = useCallback((item: GenerateGrnEntry) => [item.grn_id, item.wbi_id], []);
-
-  const vehicleFor = (grn: GenerateGrnEntry) =>
-    (wbis ?? []).find((wbi) => wbi.wbi_id === grn.wbi_id)?.vehicle_no ?? '';
+  const vehicleFor = useCallback(
+    (grn: GenerateGrnEntry) => (wbis ?? []).find((wbi) => wbi.wbi_id === grn.wbi_id)?.vehicle_no ?? '',
+    [wbis]
+  );
+  const search = useCallback(
+    (item: GenerateGrnEntry) => [item.grn_id, item.wbi_id, vehicleFor(item)],
+    [vehicleFor]
+  );
 
   const handleDelete = async () => {
     if (!deleteFor) return;
@@ -81,7 +85,7 @@ export default function GrnListScreen() {
         refreshing={list.isRefetching}
         keyExtractor={(item) => item._id}
         searchFields={search}
-        searchPlaceholder="Search GRN or WBI…"
+        searchPlaceholder="Search GRN, WBI or vehicle…"
         filters={[
           { value: 'all', label: 'All', count: entries.length },
           { value: 'short', label: 'Bags short', count: counts.short },
@@ -111,7 +115,7 @@ export default function GrnListScreen() {
                 { label: 'Total bags', value: formatNumber(total) },
                 { label: 'Bags used', value: formatNumber(used), emphasis: true },
                 { label: 'Line items', value: item.entries?.length ?? 0 },
-                { label: 'Status', value: item.is_mutable ? 'Editable' : 'In inward entry' },
+                { label: 'Inward entry', value: item.is_mutable ? 'Not yet' : 'Created' },
               ]}
               onPress={() => router.push(`/operations/grn/${item._id}`)}
               onMenu={() => setMenuFor(item)}

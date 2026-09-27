@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
@@ -13,7 +13,7 @@ import {
   type GenerateGrnEntryItem,
 } from '@/api/operations-api';
 import { getErrorMessage } from '@/api/request';
-import { Button, IconButton } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
 import { DateField } from '@/components/ui/date-field';
 import { Loading } from '@/components/ui/feedback';
@@ -25,6 +25,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { Text } from '@/components/ui/text';
 import { toast } from '@/components/ui/toast';
 import { useMasterLookups } from '@/features/operations/lookups';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useSyncedState } from '@/hooks/use-synced-state';
 import { formatDate, formatNumber, today } from '@/lib/format';
 import { objectId } from '@/lib/object-id';
@@ -73,6 +74,7 @@ export default function GrnFormScreen() {
   const isEdit = Boolean(id);
 
   const lookups = useMasterLookups();
+  const { can } = usePermissions();
   const grns = useGenerateGrnEntries();
   const wbis = useInwardWeighBridgeEntries();
   const create = useCreateGenerateGrnEntry();
@@ -82,6 +84,8 @@ export default function GrnFormScreen() {
     () => (isEdit ? (grns.data ?? []).find((grn) => grn._id === id) : undefined),
     [isEdit, id, grns.data]
   );
+
+  const [wbiQuery, setWbiQuery] = useState('');
 
   const [draft, setDraft] = useSyncedState<{
     grnId: string;
@@ -135,6 +139,12 @@ export default function GrnFormScreen() {
   const setWbiPickerOpen = (value: boolean) => setDraft((current) => ({ ...current, pickerOpen: value }));
 
   const selectedWbi = (wbis.data ?? []).find((wbi) => wbi.wbi_id === wbiId);
+  /** A GRN cannot predate its weigh-in; the date picker stops at that day. */
+  const wbiDate = selectedWbi?.date ? String(selectedWbi.date).slice(0, 10) : '';
+  const wbiDay = useMemo(() => {
+    const [y, m, d] = wbiDate.split('-').map(Number);
+    return y && m && d ? new Date(y, m - 1, d) : undefined;
+  }, [wbiDate]);
   const wbiCommodityIds = selectedWbi?.commodity_ids ?? [];
   const lockCommodity = wbiCommodityIds.length === 1;
 
@@ -146,6 +156,19 @@ export default function GrnFormScreen() {
         .filter((wbi) => (wbi.commodity_ids?.length ?? 0) > 0),
     [wbis.data, grns.data, wbiId]
   );
+
+  const visibleWbis = useMemo(() => {
+    const q = wbiQuery.trim().toLowerCase();
+    if (!q) return availableWbis;
+    return availableWbis.filter((wbi) =>
+      [wbi.wbi_id, wbi.vehicle_no, wbi.driver_name, lookups.sourceLocationName(wbi.source_location_id)]
+        .some((value) => String(value ?? '').toLowerCase().includes(q))
+    );
+  }, [availableWbis, wbiQuery, lookups]);
+
+  /** The web form's `+` beside a master picker. */
+  const createMaster = (module: string) =>
+    can(`${module}:create`) ? () => router.push(`/masters/${module}/new` as never) : undefined;
 
   const usedBags = entries.reduce((sum, entry) => sum + (entry.bags_used || 0), 0);
   const remaining = totalBags - usedBags;
@@ -260,7 +283,7 @@ export default function GrnFormScreen() {
     <Screen edges={['top']}>
       <Header title={isEdit ? `Edit GRN ${grnId}` : 'New GRN'} subtitle={wbiId ? `Against WBI ${wbiId}` : 'Select a weigh-in to begin'} />
 
-      <Body>
+      <Body bottomOffset={136}>
         {!wbiId && (
           <Callout
             tone="warning"
@@ -284,7 +307,7 @@ export default function GrnFormScreen() {
                 <Input value={grnId} readOnly />
               </Field>
               <Field label="Date" required style={{ flex: 1.4 }}>
-                <DateField value={date} onChange={setDate} />
+                <DateField value={date} onChange={setDate} minimumDate={wbiDay} />
               </Field>
             </View>
             <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
@@ -328,6 +351,7 @@ export default function GrnFormScreen() {
               }
               lockCommodity={Boolean(wbiId) && lockCommodity}
               onToggle={() => setExpanded(expanded === entry._id ? null : entry._id)}
+              createMaster={createMaster}
               onChange={(patch) => updateEntry(entry._id, patch)}
               onRemove={() => setEntries((current) => current.filter((row) => row._id !== entry._id))}
             />
@@ -339,24 +363,19 @@ export default function GrnFormScreen() {
         )}
       </Body>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-around',
-          paddingVertical: theme.spacing.sm,
-          backgroundColor: theme.colors.surfaceAlt,
-        }}
+      <ActionBar
+        summary={
+          <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+            <Tally label="On WBI" value={formatNumber(totalBags)} />
+            <Tally label="Used" value={formatNumber(usedBags)} />
+            <Tally
+              label="Remaining"
+              value={formatNumber(remaining)}
+              tone={remaining < 0 ? 'danger' : remaining === 0 ? 'success' : 'warning'}
+            />
+          </View>
+        }
       >
-        <Tally label="On WBI" value={formatNumber(totalBags)} />
-        <Tally label="Used" value={formatNumber(usedBags)} />
-        <Tally
-          label="Remaining"
-          value={formatNumber(remaining)}
-          tone={remaining < 0 ? 'danger' : remaining === 0 ? 'success' : 'warning'}
-        />
-      </View>
-
-      <ActionBar>
         <Button label="Cancel" variant="outline" style={{ flex: 1 }} onPress={() => router.back()} />
         <Button
           label={isEdit ? 'Save changes' : 'Create GRN'}
@@ -367,13 +386,24 @@ export default function GrnFormScreen() {
       </ActionBar>
 
       <Sheet open={wbiPickerOpen} onClose={() => setWbiPickerOpen(false)} title="Select a WBI" subtitle="Weigh-ins not yet booked to a GRN">
-        <ScrollView contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.sm }}>
-          {availableWbis.length === 0 && (
+        {availableWbis.length > 5 && (
+          <View style={{ paddingHorizontal: theme.spacing.lg }}>
+            <Input
+              leftIcon="search"
+              placeholder="Search WBI, vehicle, driver…"
+              value={wbiQuery}
+              onChangeText={setWbiQuery}
+              autoCorrect={false}
+            />
+          </View>
+        )}
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.sm }}>
+          {visibleWbis.length === 0 && (
             <Text tone="muted" style={{ textAlign: 'center', paddingVertical: theme.spacing.xl }}>
-              Every weigh-in already has a GRN.
+              {availableWbis.length === 0 ? 'Every weigh-in already has a GRN.' : `Nothing matches “${wbiQuery.trim()}”.`}
             </Text>
           )}
-          {availableWbis.map((wbi) => (
+          {visibleWbis.map((wbi) => (
             <Pressable
               key={wbi._id}
               accessibilityRole="button"
@@ -431,6 +461,7 @@ function EntryCard({
   commodityOptions,
   lockCommodity,
   onToggle,
+  createMaster,
   onChange,
   onRemove,
 }: {
@@ -442,6 +473,7 @@ function EntryCard({
   commodityOptions: { value: string; label: string }[];
   lockCommodity: boolean;
   onToggle: () => void;
+  createMaster: (module: string) => (() => void) | undefined;
   onChange: (patch: Partial<EntryItem>) => void;
   onRemove: () => void;
 }) {
@@ -498,7 +530,6 @@ function EntryCard({
                 : 'Location not set'}
           </Text>
         </View>
-        <IconButton icon="trash-outline" tone="danger" accessibilityLabel={`Remove entry ${index + 1}`} onPress={onRemove} />
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.faintText} />
       </Pressable>
 
@@ -515,6 +546,8 @@ function EntryCard({
               onChange={(value) => onChange({ commodity_id: value, grade_id: '' })}
               title="Commodity"
               disabled={lockCommodity}
+              onCreate={lockCommodity ? undefined : createMaster('commodity')}
+              createLabel="Add commodity"
             />
           </Field>
 
@@ -526,6 +559,8 @@ function EntryCard({
               title="Grade"
               placeholder={entry.commodity_id ? 'Select grade' : 'Pick a commodity first'}
               disabled={!entry.commodity_id}
+              onCreate={createMaster('grade')}
+              createLabel="Add grade"
             />
           </Field>
 
@@ -535,6 +570,8 @@ function EntryCard({
               options={lookups.bagTypeOptions}
               onChange={(value) => onChange({ base_bag_type_id: value, bag_type_id: '' })}
               title="Bag type"
+              onCreate={createMaster('bag-type')}
+              createLabel="Add bag type"
             />
           </Field>
 
@@ -546,11 +583,17 @@ function EntryCard({
               title="Bag configuration"
               placeholder={baseBagTypeId ? 'Select configuration' : 'Pick a bag type first'}
               disabled={!baseBagTypeId}
+              onCreate={createMaster('bag-type-config')}
+              createLabel="Add bag configuration"
             />
           </Field>
 
           <Field label="Number of bags" required>
-            <NumberInput value={entry.bags_used || ''} onChangeValue={(value) => onChange({ bags_used: Number(value || 0) })} />
+            <NumberInput
+              value={entry.bags_used || ''}
+              keyboardType="number-pad"
+              onChangeValue={(value) => onChange({ bags_used: Math.max(0, Math.floor(Number(value || 0))) })}
+            />
           </Field>
 
           <Field label="Location" required>
@@ -559,6 +602,8 @@ function EntryCard({
               options={lookups.locationOptions}
               onChange={(value) => onChange({ location_id: value, sub_location_id: '' })}
               title="Warehouse location"
+              onCreate={createMaster('warehouse-location')}
+              createLabel="Add warehouse"
             />
           </Field>
 
@@ -592,6 +637,27 @@ function EntryCard({
           <Field label="Remarks">
             <Input value={entry.remarks ?? ''} onChangeText={(value) => onChange({ remarks: value })} />
           </Field>
+
+          {/* Down here rather than in the header, where a mis-tap while scrolling deleted a line. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Remove entry ${index + 1}`}
+            onPress={onRemove}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              alignSelf: 'flex-start',
+              gap: theme.spacing.xs,
+              paddingVertical: theme.spacing.xs,
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
+            <Text variant="label" tone="danger">
+              Remove entry {index + 1}
+            </Text>
+          </Pressable>
         </Animated.View>
       )}
     </Card>

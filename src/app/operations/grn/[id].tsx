@@ -61,7 +61,7 @@ export default function GrnDetailScreen() {
         title={`GRN ${grn.grn_id}`}
         subtitle={`WBI ${grn.wbi_id} · ${formatDate(grn.date)}`}
         right={
-          canUpdate ? (
+          canUpdate && grn.is_mutable ? (
             <Button icon="create-outline" variant="outline" size="sm" accessibilityLabel="Edit GRN" onPress={edit} />
           ) : undefined
         }
@@ -74,7 +74,7 @@ export default function GrnDetailScreen() {
               label={short > 0 ? `${formatNumber(short)} bags short` : 'Complete'}
               tone={short > 0 ? 'warning' : 'success'}
             />
-            {!grn.is_mutable && <Badge label="Used in inward entry" tone="info" />}
+            {!grn.is_mutable && <Badge label="Inward entry created · locked" tone="info" />}
           </View>
 
           <DetailRow label="Total bags on WBI" value={formatNumber(grn.total_bags)} />

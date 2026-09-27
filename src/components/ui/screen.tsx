@@ -129,12 +129,18 @@ export function Body({
   children,
   contentContainerStyle,
   gap,
+  bottomOffset = FOCUSED_FIELD_CLEARANCE,
   ...rest
-}: ScrollViewProps & { children: ReactNode; gap?: number }) {
+}: ScrollViewProps & {
+  children: ReactNode;
+  gap?: number;
+  /** Raise when the action bar carries a summary row and so stands taller. */
+  bottomOffset?: number;
+}) {
   const theme = useTheme();
   return (
     <KeyboardAwareScrollView
-      bottomOffset={FOCUSED_FIELD_CLEARANCE}
+      bottomOffset={bottomOffset}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
       showsVerticalScrollIndicator={false}
@@ -160,7 +166,7 @@ export function Body({
  * scrolling back is the difference between one tap and ten. It rides on top
  * of the keyboard, so Save stays visible while typing.
  */
-export function ActionBar({ children }: { children: ReactNode }) {
+export function ActionBar({ children, summary }: { children: ReactNode; summary?: ReactNode }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const bottomPadding = Math.max(insets.bottom, theme.spacing.md);
@@ -169,17 +175,18 @@ export function ActionBar({ children }: { children: ReactNode }) {
     <KeyboardStickyView offset={{ closed: 0, opened: bottomPadding - theme.spacing.md }}>
       <View
         style={{
-          flexDirection: 'row',
-          gap: theme.spacing.md,
+          gap: theme.spacing.sm,
           paddingHorizontal: theme.spacing.lg,
-          paddingTop: theme.spacing.md,
+          paddingTop: summary ? theme.spacing.sm : theme.spacing.md,
           paddingBottom: bottomPadding,
           backgroundColor: theme.colors.surface,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: theme.colors.border,
         }}
       >
-        {children}
+        {/* Running totals ride with the buttons, so they stay visible while typing. */}
+        {summary}
+        <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>{children}</View>
       </View>
     </KeyboardStickyView>
   );
