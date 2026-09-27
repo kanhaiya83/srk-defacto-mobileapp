@@ -1,4 +1,4 @@
-import type { StockLedgerEntry } from '@/api/operations-api';
+import type { InitialStockEntry, StockLedgerEntry } from '@/api/operations-api';
 import { refId } from '@/lib/format';
 
 /**
@@ -275,4 +275,24 @@ export function groupStock(
   }
 
   return [...groups.values()].sort((a, b) => b.bags - a.bags);
+}
+
+/** Bags and weight of an opening-stock entry already drawn on — the floor for editing it. */
+export function initialStockUsed(entry: InitialStockEntry) {
+  const ledger = entry.stock_ledger_id && typeof entry.stock_ledger_id === 'object' ? (entry.stock_ledger_id as StockLedgerEntry) : null;
+  if (!ledger) return { bags: 0, weight: 0 };
+  return {
+    bags:
+      (ledger.allocated_bags || 0) +
+      (ledger.outward_allocated_bags || 0) +
+      (ledger.consumed_bags || 0) +
+      (ledger.outward_bags || 0) +
+      (ledger.transferred_bags || 0),
+    weight:
+      (ledger.allocated_weight || 0) +
+      (ledger.outward_allocated_weight || 0) +
+      (ledger.consumed_weight || 0) +
+      (ledger.outward_weight || 0) +
+      (ledger.transferred_weight || 0),
+  };
 }
