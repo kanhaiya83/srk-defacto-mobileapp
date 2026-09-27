@@ -1,23 +1,23 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { View } from 'react-native';
 
 import {
+  useDeleteInwardWeighBridgeEntry,
   useInwardWeighBridgeEntries,
   useUpdateInwardWeighBridgeEntry,
   type InwardWeighBridgeEntry,
 } from '@/api/operations-api';
 import { getErrorMessage } from '@/api/request';
-import { ListBody } from '@/components/list-screen';
+import { ActionSheet, ListBody } from '@/components/list-screen';
 import { RecordCard } from '@/components/record-card';
 import { Button } from '@/components/ui/button';
 import { Field, NumberInput } from '@/components/ui/field';
 import { Callout, DetailRow } from '@/components/ui/misc';
 import { Header, Screen } from '@/components/ui/screen';
-import { Sheet } from '@/components/ui/sheet';
-import { Text } from '@/components/ui/text';
+import { ConfirmSheet, Sheet, SheetBody } from '@/components/ui/sheet';
 import { toast } from '@/components/ui/toast';
 import { useMasterLookups } from '@/features/operations/lookups';
+import { isWeighed, WBI_LOCKED_REASON, wbiEditPath } from '@/features/operations/wbi';
 import { useModulePermissions } from '@/hooks/use-permissions';
 import { formatDate, formatNumber } from '@/lib/format';
 
@@ -27,8 +27,8 @@ type Filter = 'pending' | 'weighed' | 'all';
  * WBI Empty — closing out a vehicle by recording its tare weight.
  *
  * This is the one screen an operator uses standing at the weigh bridge, so the
- * whole flow is one tap and one number: the sheet shows the loaded weight, the
- * net updates as they type, and the obvious mistake (empty ≥ loaded) is caught
+ * flow is one tap and one number: the sheet shows the loaded weight, the net
+ * updates as they type, and the obvious mistake (empty ≥ loaded) is caught
  * before the request is sent.
  */
 export default function WbiFinalScreen() {
@@ -36,14 +36,17 @@ export default function WbiFinalScreen() {
   const lookups = useMasterLookups();
   const list = useInwardWeighBridgeEntries();
   const update = useUpdateInwardWeighBridgeEntry();
-  const { canUpdate } = useModulePermissions('wbi');
+  const remove = useDeleteInwardWeighBridgeEntry();
+  const { canUpdate, canDelete } = useModulePermissions('wbi');
 
   const [filter, setFilter] = useState<Filter>('pending');
   const [editing, setEditing] = useState<InwardWeighBridgeEntry | null>(null);
   const [weight, setWeight] = useState<number | ''>('');
+  const [menuFor, setMenuFor] = useState<InwardWeighBridgeEntry | null>(null);
+  const [deleteFor, setDeleteFor] = useState<InwardWeighBridgeEntry | null>(null);
 
-  const entries = list.data ?? [];
-  const isWeighed = (entry: InwardWeighBridgeEntry) => Boolean(entry.empty_weight && entry.empty_weight > 0);
+  const entries = useMemo(() => list.data ?? [], [list.data]);
+  const pendingCount = entries.filter((entry) => !isWeighed(entry)).length;
 
   const filtered = useMemo(() => {
     if (filter === 'all') return entries;
@@ -51,26 +54,34 @@ export default function WbiFinalScreen() {
   }, [entries, filter]);
 
   const search = useCallback(
-    (item: InwardWeighBridgeEntry) => [item.wbi_id, item.vehicle_no, item.driver_name, item.slip_number],
-    []
+    (item: InwardWeighBridgeEntry) => [
+      item.wbi_id,
+      item.vehicle_no,
+      item.driver_name,
+      item.slip_number,
+      lookups.sourceLocationName(item.source_location_id),
+    ],
+    [lookups]
   );
 
-  const netWeight = editing && weight !== '' ? Number(editing.weight_fully_loaded) - Number(weight) : null;
-  const invalid =
-    editing && weight !== '' && (Number(weight) <= 0 || Number(editing.weight_fully_loaded) <= Number(weight));
+  const loaded = Number(editing?.weight_fully_loaded ?? 0);
+  const netWeight = editing && weight !== '' ? loaded - Number(weight) : null;
+  const invalid = editing !== null && weight !== '' && (Number(weight) <= 0 || loaded <= Number(weight));
+
+  /** An entry can take an empty weight until it is both GRN-linked and weighed. */
+  const canWeigh = (entry: InwardWeighBridgeEntry) => canUpdate && wbiEditPath(entry) !== null;
 
   const openEditor = (entry: InwardWeighBridgeEntry) => {
     if (!canUpdate) {
       toast.error('Your role cannot record weights');
       return;
     }
-    // Once a GRN exists and the weight is already in, the entry is settled.
-    if (isWeighed(entry) && !entry.is_mutable) {
-      toast.error('Locked — this entry is used in a GRN and its empty weight is recorded');
+    if (!canWeigh(entry)) {
+      toast.error(WBI_LOCKED_REASON);
       return;
     }
     setEditing(entry);
-    setWeight(entry.empty_weight > 0 ? entry.empty_weight : '');
+    setWeight(isWeighed(entry) ? entry.empty_weight : '');
   };
 
   const save = async () => {
@@ -79,7 +90,7 @@ export default function WbiFinalScreen() {
       toast.error('Empty weight must be greater than zero');
       return;
     }
-    if (Number(editing.weight_fully_loaded) <= Number(weight)) {
+    if (loaded <= Number(weight)) {
       toast.error('Loaded weight must be greater than empty weight');
       return;
     }
@@ -87,21 +98,25 @@ export default function WbiFinalScreen() {
     try {
       await update.mutateAsync({
         id: editing._id,
-        data: {
-          empty_weight: Number(weight),
-          net_weight: Number(editing.weight_fully_loaded) - Number(weight),
-        },
+        data: { empty_weight: Number(weight), net_weight: loaded - Number(weight) },
       });
-      toast.success('Empty weight recorded', {
-        description: `Net ${formatNumber(Number(editing.weight_fully_loaded) - Number(weight))} kg`,
-      });
+      toast.success('Empty weight recorded', { description: `Net ${formatNumber(loaded - Number(weight))} kg` });
       setEditing(null);
     } catch (error) {
       toast.error('Could not save the weight', { description: getErrorMessage(error) });
     }
   };
 
-  const pendingCount = entries.filter((entry) => !isWeighed(entry)).length;
+  const handleDelete = async () => {
+    if (!deleteFor) return;
+    try {
+      await remove.mutateAsync(deleteFor._id);
+      toast.success('Entry deleted');
+    } catch (error) {
+      toast.error('Could not delete entry', { description: getErrorMessage(error) });
+    }
+    setDeleteFor(null);
+  };
 
   return (
     <Screen>
@@ -135,33 +150,85 @@ export default function WbiFinalScreen() {
         }
         renderItem={(item) => {
           const weighed = isWeighed(item);
+          const editable = canWeigh(item);
           return (
             <RecordCard
               title={`WBI ${item.wbi_id}`}
-              subtitle={`${item.vehicle_no || 'No vehicle'} · ${formatDate(item.date)}`}
+              subtitle={[item.vehicle_no || 'No vehicle', item.driver_name, formatDate(item.date)].filter(Boolean).join(' · ')}
               badge={{ label: weighed ? 'Weighed' : 'Awaiting weight', tone: weighed ? 'success' : 'warning' }}
               accent={weighed ? undefined : 'warning'}
               fields={[
-                { label: 'Loaded', value: `${formatNumber(item.weight_fully_loaded)} kg` },
-                { label: 'Empty', value: weighed ? `${formatNumber(item.empty_weight)} kg` : null },
-                { label: 'Net', value: weighed ? `${formatNumber(item.net_weight)} kg` : null, emphasis: true },
                 { label: 'Source', value: lookups.sourceLocationName(item.source_location_id) },
+                {
+                  label: 'Commodity',
+                  value: (item.commodity_ids ?? []).map((cid) => lookups.commodityName(cid)).join(', '),
+                },
+                { label: 'Bags', value: formatNumber(item.total_bags) },
+                { label: 'Loaded', value: `${formatNumber(item.weight_fully_loaded)} kg` },
+                ...(weighed
+                  ? [
+                      { label: 'Empty', value: `${formatNumber(item.empty_weight)} kg` },
+                      { label: 'Net', value: `${formatNumber(item.net_weight)} kg`, emphasis: true },
+                    ]
+                  : []),
               ]}
               onPress={() => router.push(`/operations/wbi/${item._id}`)}
+              onMenu={() => setMenuFor(item)}
               footer={
-                <Button
-                  label={weighed ? 'Adjust empty weight' : 'Record empty weight'}
-                  variant={weighed ? 'outline' : 'primary'}
-                  size="sm"
-                  icon="speedometer-outline"
-                  fullWidth
-                  disabled={!canUpdate || (weighed && !item.is_mutable)}
-                  onPress={() => openEditor(item)}
-                />
+                editable ? (
+                  <Button
+                    label={weighed ? 'Adjust empty weight' : 'Record empty weight'}
+                    variant={weighed ? 'outline' : 'primary'}
+                    size="sm"
+                    icon="speedometer-outline"
+                    fullWidth
+                    onPress={() => openEditor(item)}
+                  />
+                ) : undefined
               }
             />
           );
         }}
+      />
+
+      <ActionSheet
+        open={menuFor !== null}
+        onClose={() => setMenuFor(null)}
+        title={menuFor ? `WBI ${menuFor.wbi_id}` : undefined}
+        actions={[
+          {
+            label: 'View details',
+            icon: 'eye-outline',
+            onPress: () => menuFor && router.push(`/operations/wbi/${menuFor._id}`),
+          },
+          {
+            label: 'Edit entry',
+            icon: 'create-outline',
+            disabled: !canUpdate || !(menuFor && wbiEditPath(menuFor)),
+            disabledReason: canUpdate ? WBI_LOCKED_REASON : 'Your role cannot edit weigh bridge entries',
+            onPress: () => {
+              const path = menuFor && wbiEditPath(menuFor);
+              if (path) router.push(path as never);
+            },
+          },
+          {
+            label: 'Delete',
+            icon: 'trash-outline',
+            tone: 'danger',
+            disabled: !canDelete || !menuFor?.is_deletable,
+            disabledReason: canDelete ? 'Locked — used in a GRN' : 'Your role cannot delete weigh bridge entries',
+            onPress: () => menuFor && setDeleteFor(menuFor),
+          },
+        ]}
+      />
+
+      <ConfirmSheet
+        open={deleteFor !== null}
+        onClose={() => setDeleteFor(null)}
+        onConfirm={handleDelete}
+        loading={remove.isPending}
+        title="Delete this weigh-in?"
+        description={deleteFor ? `WBI ${deleteFor.wbi_id} for ${deleteFor.vehicle_no || 'this vehicle'} will be removed.` : undefined}
       />
 
       <Sheet
@@ -176,20 +243,15 @@ export default function WbiFinalScreen() {
               label="Save weight"
               style={{ flex: 2 }}
               loading={update.isPending}
-              disabled={weight === '' || Boolean(invalid)}
+              disabled={weight === '' || invalid}
               onPress={save}
             />
           </>
         }
       >
         {editing && (
-          <View style={{ paddingHorizontal: 16, gap: 16 }}>
-            <View>
-              <DetailRow label="Loaded weight" value={`${formatNumber(editing.weight_fully_loaded)} kg`} />
-              <DetailRow label="Total bags" value={formatNumber(editing.total_bags)} />
-              <DetailRow label="Driver" value={editing.driver_name} />
-            </View>
-
+          <SheetBody>
+            {/* The number being typed comes first, so it stays in view above the keyboard. */}
             <Field
               label="Empty weight"
               required
@@ -201,25 +263,26 @@ export default function WbiFinalScreen() {
                 placeholder="0"
                 suffix="kg"
                 autoFocus
-                error={Boolean(invalid)}
+                error={invalid}
               />
             </Field>
 
             {netWeight !== null && !invalid && (
-              <Callout
-                tone="success"
-                icon="calculator-outline"
-                title={`Net weight ${formatNumber(netWeight)} kg`}
-                description="Loaded minus empty. Saved with the entry."
-              />
+              <Callout tone="success" icon="calculator-outline" title={`Net weight ${formatNumber(netWeight)} kg`} />
             )}
 
+            <DetailRow label="Loaded weight" value={`${formatNumber(loaded)} kg`} emphasis />
+            <DetailRow label="Total bags" value={formatNumber(editing.total_bags)} />
+            <DetailRow label="Driver" value={editing.driver_name} />
+
             {!editing.is_mutable && (
-              <Text variant="caption" tone="muted">
-                This entry already has a GRN. Once the empty weight is saved it can no longer be changed here.
-              </Text>
+              <Callout
+                tone="warning"
+                title="Used in a GRN"
+                description="Once this empty weight is saved the entry locks and cannot be changed again."
+              />
             )}
-          </View>
+          </SheetBody>
         )}
       </Sheet>
     </Screen>

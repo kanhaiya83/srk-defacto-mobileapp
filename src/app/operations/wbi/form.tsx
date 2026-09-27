@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
 import {
@@ -13,35 +13,23 @@ import { getErrorMessage } from '@/api/request';
 import { Button } from '@/components/ui/button';
 import { Card, SectionHeader } from '@/components/ui/card';
 import { DateField } from '@/components/ui/date-field';
-import { Loading } from '@/components/ui/feedback';
+import { EmptyState, Loading } from '@/components/ui/feedback';
 import { Field, Input, NumberInput } from '@/components/ui/field';
-import { Callout } from '@/components/ui/misc';
+import { Callout, DetailRow } from '@/components/ui/misc';
 import { MultiSelect, Select } from '@/components/ui/select';
 import { ActionBar, Body, Header, Screen } from '@/components/ui/screen';
-import { Text } from '@/components/ui/text';
 import { toast } from '@/components/ui/toast';
 import { useMasterLookups } from '@/features/operations/lookups';
-import {
-  dedupeByVehicle,
-  formatVehicleNumber,
-  isValidVehicleNumber,
-  matchVehicles,
-  toVehicleRecord,
-  VEHICLE_FORMAT_HINT,
-  type VehicleRecord,
-} from '@/features/operations/vehicle';
+import { formatVehicleNumber, isValidVehicleNumber, VEHICLE_FORMAT_HINT, type VehicleRecord } from '@/features/operations/vehicle';
+import { useVehicleHistory, VehicleFields } from '@/features/operations/vehicle-fields';
+import { usePermissions } from '@/hooks/use-permissions';
 import { useSyncedState } from '@/hooks/use-synced-state';
 import { formatNumber, today } from '@/lib/format';
 import { useTheme } from '@/theme';
 
-interface FormState {
+interface FormState extends VehicleRecord {
   wbi_id: string;
   date: string;
-  vehicle_no: string;
-  driver_name: string;
-  mobile_no: string;
-  drivers_license_no: string;
-  rc_copy_no: string;
   weight_fully_loaded: number | '';
   empty_weight: number | '';
   source_location_id: string;
@@ -68,60 +56,61 @@ const blank = (): FormState => ({
   total_bags: '',
 });
 
+const fromEntry = (entry: InwardWeighBridgeEntry): FormState => ({
+  wbi_id: entry.wbi_id,
+  date: entry.date ? String(entry.date).slice(0, 10) : today(),
+  vehicle_no: entry.vehicle_no ?? '',
+  driver_name: entry.driver_name ?? '',
+  mobile_no: entry.mobile_no ?? '',
+  drivers_license_no: entry.drivers_license_no ?? '',
+  rc_copy_no: entry.rc_copy_no ?? '',
+  weight_fully_loaded: entry.weight_fully_loaded ?? '',
+  empty_weight: entry.empty_weight || '',
+  source_location_id: entry.source_location_id ?? '',
+  weigh_bridge_id: entry.weigh_bridge_id ?? '',
+  slip_number: entry.slip_number ?? '',
+  commodity_ids: entry.commodity_ids ?? [],
+  total_bags: entry.total_bags ?? '',
+});
+
 /**
  * Weigh bridge entry — create and edit.
  *
- * `mode=initial` captures the loaded weigh-in; `mode=final` only unlocks the
- * empty weight, matching the web form's two-phase behaviour. The gate fields
- * stay visible in final mode but read-only, so the operator can verify the
- * vehicle in front of them without leaving the screen.
+ * `mode=initial` captures the loaded weigh-in; `mode=final` records the empty
+ * weight, with the gate details shown read-only so the operator can check the
+ * vehicle in front of them.
+ *
+ * Once a GRN is raised on an entry the server only accepts the empty weight,
+ * and ignores anything else without saying so. Such an entry therefore always
+ * opens in final mode here, so no edit is silently lost.
  */
 export default function WbiFormScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { id, mode } = useLocalSearchParams<{ id?: string; mode?: string }>();
-  const isInitial = mode !== 'final';
   const isEdit = Boolean(id);
+  const { can } = usePermissions();
 
   const lookups = useMasterLookups();
   const list = useInwardWeighBridgeEntries();
   const create = useCreateInwardWeighBridgeEntry();
   const update = useUpdateInwardWeighBridgeEntry();
+  const vehicleHistory = useVehicleHistory('inward');
 
   const [error, setError] = useState<{ key: keyof FormState; message: string } | null>(null);
-  const [vehicleQuery, setVehicleQuery] = useState('');
 
   const editItem = useMemo(
     () => (isEdit ? (list.data ?? []).find((entry) => entry._id === id) : undefined),
     [isEdit, id, list.data]
   );
-
-  const vehicleHistory = useMemo<VehicleRecord[]>(
-    () => dedupeByVehicle((list.data ?? []).map(toVehicleRecord)),
-    [list.data]
-  );
+  const isInitial = mode !== 'final' && !(editItem && !editItem.is_mutable);
+  const recordedEmpty = editItem && editItem.empty_weight > 0 ? editItem.empty_weight : null;
+  const locked = Boolean(editItem && !editItem.is_mutable && recordedEmpty);
 
   const [form, setForm] = useSyncedState<FormState>(
     isEdit ? (editItem?._id ?? null) : list.data ? 'new' : null,
     () => {
-      if (editItem) {
-        return {
-          wbi_id: editItem.wbi_id,
-          date: editItem.date ? String(editItem.date).slice(0, 10) : today(),
-          vehicle_no: editItem.vehicle_no ?? '',
-          driver_name: editItem.driver_name ?? '',
-          mobile_no: editItem.mobile_no ?? '',
-          drivers_license_no: editItem.drivers_license_no ?? '',
-          rc_copy_no: editItem.rc_copy_no ?? '',
-          weight_fully_loaded: editItem.weight_fully_loaded ?? '',
-          empty_weight: editItem.empty_weight || '',
-          source_location_id: editItem.source_location_id ?? '',
-          weigh_bridge_id: editItem.weigh_bridge_id ?? '',
-          slip_number: editItem.slip_number ?? '',
-          commodity_ids: editItem.commodity_ids ?? [],
-          total_bags: editItem.total_bags ?? '',
-        };
-      }
+      if (editItem) return fromEntry(editItem);
       // Next number in sequence, exactly as the web form derives it.
       const maxId = (list.data ?? []).reduce((max, entry) => {
         const parsed = parseInt(entry.wbi_id || '0', 10);
@@ -141,20 +130,6 @@ export default function WbiFormScreen() {
       ? Number(form.weight_fully_loaded) - Number(form.empty_weight)
       : null;
 
-  const suggestions = matchVehicles(vehicleHistory, vehicleQuery);
-
-  const applyVehicle = (record: VehicleRecord) => {
-    setForm((current) => ({
-      ...current,
-      vehicle_no: record.vehicle_no || current.vehicle_no,
-      driver_name: record.driver_name || current.driver_name,
-      mobile_no: record.mobile_no || current.mobile_no,
-      drivers_license_no: record.drivers_license_no || current.drivers_license_no,
-      rc_copy_no: record.rc_copy_no || current.rc_copy_no,
-    }));
-    setVehicleQuery('');
-  };
-
   /** First failing rule, in the order the web form checks them. */
   const validate = (): { key: keyof FormState; message: string } | null => {
     if (!form.wbi_id) return { key: 'wbi_id', message: 'WBI ID is required' };
@@ -165,17 +140,24 @@ export default function WbiFormScreen() {
     if (isInitial) {
       if (!form.source_location_id) return { key: 'source_location_id', message: 'Source location is required' };
       if (!form.weigh_bridge_id) return { key: 'weigh_bridge_id', message: 'Weigh bridge is required' };
-      if (!form.slip_number) return { key: 'slip_number', message: 'Slip number is required' };
+      if (!form.slip_number.trim()) return { key: 'slip_number', message: 'Slip number is required' };
       if (form.commodity_ids.length === 0) return { key: 'commodity_ids', message: 'At least one commodity is required' };
       if (form.total_bags === '' || Number(form.total_bags) <= 0) {
         return { key: 'total_bags', message: 'Total bags must be greater than 0' };
       }
       if (form.weight_fully_loaded === '' || Number(form.weight_fully_loaded) <= 0) {
-        return { key: 'weight_fully_loaded', message: 'Loaded weight must be a valid number' };
+        return { key: 'weight_fully_loaded', message: 'Loaded weight must be greater than 0' };
+      }
+      // An entry already weighed empty must stay heavier loaded, or the net goes negative.
+      if (recordedEmpty && Number(form.weight_fully_loaded) <= recordedEmpty) {
+        return {
+          key: 'weight_fully_loaded',
+          message: `Loaded weight must be more than the recorded empty weight (${formatNumber(recordedEmpty)} kg)`,
+        };
       }
     } else {
       if (form.empty_weight === '' || Number(form.empty_weight) <= 0) {
-        return { key: 'empty_weight', message: 'Empty weight must be a valid number' };
+        return { key: 'empty_weight', message: 'Empty weight must be greater than 0' };
       }
       if (Number(form.weight_fully_loaded) <= Number(form.empty_weight)) {
         return { key: 'empty_weight', message: 'Loaded weight must be greater than empty weight' };
@@ -192,24 +174,34 @@ export default function WbiFormScreen() {
       return;
     }
 
-    const payload = {
+    const loaded = Number(form.weight_fully_loaded || 0);
+    const empty = Number(form.empty_weight || 0);
+    const payload: Omit<InwardWeighBridgeEntry, '_id'> = {
       ...form,
+      slip_number: form.slip_number.trim(),
       vehicle_no: form.vehicle_no ? formatVehicleNumber(form.vehicle_no) : '',
       total_bags: Number(form.total_bags || 0),
-      weight_fully_loaded: Number(form.weight_fully_loaded || 0),
-      empty_weight: Number(form.empty_weight || 0),
-      net_weight: Number(form.weight_fully_loaded || 0) - Number(form.empty_weight || 0),
+      weight_fully_loaded: loaded,
+      empty_weight: empty,
+      // As on the web: before the empty weigh-in this is the loaded weight.
+      net_weight: loaded - empty,
       images: editItem?.images ?? [],
       is_mutable: editItem ? editItem.is_mutable : true,
       is_deletable: editItem ? editItem.is_deletable : true,
-    } as unknown as InwardWeighBridgeEntry;
+    };
 
     try {
       if (editItem) {
-        await update.mutateAsync({ id: editItem._id, data: payload });
-        toast.success('Weigh bridge entry updated');
+        // A GRN-linked entry only takes its weights; send just those.
+        const data = editItem.is_mutable
+          ? payload
+          : { empty_weight: payload.empty_weight, net_weight: payload.net_weight };
+        await update.mutateAsync({ id: editItem._id, data });
+        toast.success(isInitial ? 'Weigh bridge entry updated' : 'Empty weight recorded', {
+          description: !isInitial && netWeight !== null ? `Net ${formatNumber(netWeight)} kg` : undefined,
+        });
       } else {
-        await create.mutateAsync(payload);
+        await create.mutateAsync(payload as InwardWeighBridgeEntry);
         toast.success('Weigh bridge entry created', { description: `WBI ${form.wbi_id}` });
       }
       router.back();
@@ -229,13 +221,38 @@ export default function WbiFormScreen() {
     );
   }
 
+  if (isEdit && !editItem) {
+    return (
+      <Screen>
+        <Header title="Weigh bridge entry" />
+        <EmptyState icon="alert-circle-outline" title="Entry not found" description="It may have been deleted." />
+      </Screen>
+    );
+  }
+
+  if (locked) {
+    return (
+      <Screen>
+        <Header title={`WBI ${form.wbi_id}`} />
+        <EmptyState
+          icon="lock-closed-outline"
+          title="This entry is locked"
+          description="It is used in a GRN and its empty weight is recorded, so it can no longer be changed."
+        />
+      </Screen>
+    );
+  }
+
   const errorFor = (key: keyof FormState) => (error?.key === key ? error.message : undefined);
   const gateLocked = !isInitial;
+  /** The web form's `+` beside a master picker: create it without leaving the entry. */
+  const createMaster = (module: string) =>
+    !gateLocked && can(`${module}:create`) ? () => router.push(`/masters/${module}/new` as never) : undefined;
 
   return (
     <Screen edges={['top']}>
       <Header
-        title={isEdit ? `Edit WBI ${form.wbi_id}` : 'New weigh-in'}
+        title={isEdit ? `${isInitial ? 'Edit' : 'Weigh out'} WBI ${form.wbi_id}` : 'New weigh-in'}
         subtitle={isInitial ? 'Loaded vehicle at the gate' : 'Record the empty weight'}
       />
 
@@ -244,8 +261,40 @@ export default function WbiFormScreen() {
           <Callout
             tone="info"
             title="Closing out a vehicle"
-            description="Gate details are shown for reference. Only the empty weight can be changed here."
+            description={
+              editItem && !editItem.is_mutable
+                ? 'This entry is used in a GRN, so only the empty weight can be recorded.'
+                : 'Gate details are shown for reference. Only the empty weight can be changed here.'
+            }
           />
+        )}
+
+        {!isInitial && (
+          <Card>
+            <SectionHeader title="Empty weight" caption="Net weight is calculated for you" />
+            <View style={{ gap: theme.spacing.lg }}>
+              <DetailRow label="Loaded weight" value={`${formatNumber(Number(form.weight_fully_loaded))} kg`} />
+              <Field label="Empty weight" required error={errorFor('empty_weight')}>
+                <NumberInput
+                  value={form.empty_weight}
+                  onChangeValue={(value) => set('empty_weight', value)}
+                  suffix="kg"
+                  autoFocus
+                  error={Boolean(errorFor('empty_weight'))}
+                />
+              </Field>
+              {netWeight !== null && (
+                <Animated.View entering={FadeIn.duration(180)}>
+                  <Callout
+                    tone={netWeight > 0 ? 'success' : 'danger'}
+                    icon="calculator-outline"
+                    title={`Net weight ${formatNumber(netWeight)} kg`}
+                    description={netWeight > 0 ? 'Loaded minus empty' : 'Loaded weight must exceed the empty weight'}
+                  />
+                </Animated.View>
+              )}
+            </View>
+          </Card>
         )}
 
         <Card>
@@ -269,29 +318,34 @@ export default function WbiFormScreen() {
                 placeholder="Where the goods came from"
                 disabled={gateLocked}
                 error={Boolean(errorFor('source_location_id'))}
+                onCreate={createMaster('source-location')}
+                createLabel="Add source location"
               />
             </Field>
 
-            <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-              <Field label="Weigh bridge" required error={errorFor('weigh_bridge_id')} style={{ flex: 1 }}>
-                <Select
-                  value={form.weigh_bridge_id}
-                  options={lookups.weighBridgeOptions}
-                  onChange={(value) => set('weigh_bridge_id', value)}
-                  title="Weigh bridge"
-                  disabled={gateLocked}
-                  error={Boolean(errorFor('weigh_bridge_id'))}
-                />
-              </Field>
-              <Field label="Slip number" required error={errorFor('slip_number')} style={{ flex: 1 }}>
-                <Input
-                  value={form.slip_number}
-                  onChangeText={(value) => set('slip_number', value)}
-                  readOnly={gateLocked}
-                  error={Boolean(errorFor('slip_number'))}
-                />
-              </Field>
-            </View>
+            <Field label="Weigh bridge" required error={errorFor('weigh_bridge_id')}>
+              <Select
+                value={form.weigh_bridge_id}
+                options={lookups.weighBridgeOptions}
+                onChange={(value) => set('weigh_bridge_id', value)}
+                title="Weigh bridge"
+                disabled={gateLocked}
+                error={Boolean(errorFor('weigh_bridge_id'))}
+                onCreate={createMaster('weigh-bridge')}
+                createLabel="Add weigh bridge"
+              />
+            </Field>
+
+            <Field label="Slip number" required error={errorFor('slip_number')}>
+              <Input
+                value={form.slip_number}
+                onChangeText={(value) => set('slip_number', value)}
+                readOnly={gateLocked}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                error={Boolean(errorFor('slip_number'))}
+              />
+            </Field>
 
             <Field label="Commodities" required error={errorFor('commodity_ids')}>
               <MultiSelect
@@ -301,19 +355,21 @@ export default function WbiFormScreen() {
                 title="Commodities on board"
                 disabled={gateLocked}
                 error={Boolean(errorFor('commodity_ids'))}
+                onCreate={createMaster('commodity')}
               />
             </Field>
           </View>
         </Card>
 
         <Card>
-          <SectionHeader title="Weights" caption="Net weight is calculated for you" />
+          <SectionHeader title="Load" />
           <View style={{ gap: theme.spacing.lg }}>
             <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
               <Field label="Total bags" required={isInitial} error={errorFor('total_bags')} style={{ flex: 1 }}>
                 <NumberInput
                   value={form.total_bags}
                   onChangeValue={(value) => set('total_bags', value)}
+                  keyboardType="number-pad"
                   readOnly={gateLocked}
                   error={Boolean(errorFor('total_bags'))}
                 />
@@ -328,123 +384,47 @@ export default function WbiFormScreen() {
                 />
               </Field>
             </View>
-
-            {!isInitial && (
-              <Field label="Empty weight" required error={errorFor('empty_weight')}>
-                <NumberInput
-                  value={form.empty_weight}
-                  onChangeValue={(value) => set('empty_weight', value)}
-                  suffix="kg"
-                  autoFocus
-                  error={Boolean(errorFor('empty_weight'))}
-                />
-              </Field>
-            )}
-
-            {netWeight !== null && (
-              <Animated.View entering={FadeIn.duration(180)}>
-                <Callout
-                  tone={netWeight > 0 ? 'success' : 'danger'}
-                  icon="calculator-outline"
-                  title={`Net weight ${formatNumber(netWeight)} kg`}
-                  description={netWeight > 0 ? 'Loaded minus empty' : 'Loaded weight must exceed the empty weight'}
-                />
-              </Animated.View>
+            {isInitial && recordedEmpty !== null && (
+              <Callout
+                tone="info"
+                icon="calculator-outline"
+                title={`Empty weight ${formatNumber(recordedEmpty)} kg already recorded`}
+                description={
+                  netWeight !== null && netWeight > 0
+                    ? `Net will be ${formatNumber(netWeight)} kg`
+                    : 'The loaded weight must stay above it'
+                }
+              />
             )}
           </View>
         </Card>
 
         <Card>
-          <SectionHeader title="Vehicle" caption="Start typing to reuse a previous vehicle" />
-          <View style={{ gap: theme.spacing.lg }}>
-            <Field label="Vehicle no" error={errorFor('vehicle_no')} hint={VEHICLE_FORMAT_HINT}>
-              <Input
-                value={form.vehicle_no}
-                onChangeText={(value) => {
-                  set('vehicle_no', value);
-                  setVehicleQuery(value);
-                }}
-                onBlur={() => {
-                  set('vehicle_no', formatVehicleNumber(form.vehicle_no));
-                  setVehicleQuery('');
-                }}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                placeholder="RJ-14-CA-1234"
-                readOnly={gateLocked}
-                error={Boolean(errorFor('vehicle_no'))}
-              />
-            </Field>
-
-            {suggestions.length > 0 && !gateLocked && (
-              <Animated.View
-                entering={FadeIn.duration(160)}
-                style={{
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.surfaceAlt,
-                  overflow: 'hidden',
-                }}
-              >
-                {suggestions.map((record) => (
-                  <Pressable
-                    key={record.vehicle_no}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Use ${record.vehicle_no}, ${record.driver_name}`}
-                    onPress={() => applyVehicle(record)}
-                    style={({ pressed }) => ({
-                      padding: theme.spacing.md,
-                      gap: 1,
-                      backgroundColor: pressed ? theme.colors.surfaceActive : 'transparent',
-                    })}
-                  >
-                    <Text variant="bodyStrong">{record.vehicle_no}</Text>
-                    <Text variant="caption" tone="muted">
-                      {[record.driver_name, record.mobile_no].filter(Boolean).join(' · ') || 'No driver on file'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </Animated.View>
-            )}
-
-            <Field label="Driver name">
-              <Input
-                value={form.driver_name}
-                onChangeText={(value) => set('driver_name', value)}
-                readOnly={gateLocked}
-              />
-            </Field>
-            <Field label="Mobile no">
-              <Input
-                value={form.mobile_no}
-                onChangeText={(value) => set('mobile_no', value)}
-                keyboardType="phone-pad"
-                readOnly={gateLocked}
-              />
-            </Field>
-            <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-              <Field label="License no" style={{ flex: 1 }}>
-                <Input
-                  value={form.drivers_license_no}
-                  onChangeText={(value) => set('drivers_license_no', value)}
-                  readOnly={gateLocked}
-                />
-              </Field>
-              <Field label="RC copy no" style={{ flex: 1 }}>
-                <Input
-                  value={form.rc_copy_no}
-                  onChangeText={(value) => set('rc_copy_no', value)}
-                  readOnly={gateLocked}
-                />
-              </Field>
-            </View>
-          </View>
+          <SectionHeader title="Vehicle" />
+          <VehicleFields
+            value={form}
+            history={vehicleHistory}
+            readOnly={gateLocked}
+            vehicleError={errorFor('vehicle_no')}
+            onChange={(field, text) => set(field, text)}
+            onApply={(record) =>
+              setForm((current) => ({
+                ...current,
+                vehicle_no: record.vehicle_no || current.vehicle_no,
+                driver_name: record.driver_name || current.driver_name,
+                mobile_no: record.mobile_no || current.mobile_no,
+                drivers_license_no: record.drivers_license_no || current.drivers_license_no,
+                rc_copy_no: record.rc_copy_no || current.rc_copy_no,
+              }))
+            }
+          />
         </Card>
       </Body>
 
       <ActionBar>
         <Button label="Cancel" variant="outline" style={{ flex: 1 }} onPress={() => router.back()} />
         <Button
-          label={isEdit ? 'Save changes' : 'Create entry'}
+          label={!isEdit ? 'Create entry' : isInitial ? 'Save changes' : 'Save empty weight'}
           style={{ flex: 2 }}
           loading={create.isPending || update.isPending}
           onPress={submit}

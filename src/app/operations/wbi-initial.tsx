@@ -13,6 +13,7 @@ import { Header, Screen } from '@/components/ui/screen';
 import { ConfirmSheet } from '@/components/ui/sheet';
 import { toast } from '@/components/ui/toast';
 import { useMasterLookups } from '@/features/operations/lookups';
+import { isWeighed, WBI_LOCKED_REASON, wbiEditPath } from '@/features/operations/wbi';
 import { useModulePermissions } from '@/hooks/use-permissions';
 import { formatDate, formatNumber } from '@/lib/format';
 
@@ -34,13 +35,17 @@ export default function WbiInitialScreen() {
   const [deleteFor, setDeleteFor] = useState<InwardWeighBridgeEntry | null>(null);
 
   const search = useCallback(
-    (item: InwardWeighBridgeEntry) => [item.wbi_id, item.vehicle_no, item.driver_name, item.slip_number, item.mobile_no],
-    []
+    (item: InwardWeighBridgeEntry) => [
+      item.wbi_id,
+      item.vehicle_no,
+      item.driver_name,
+      item.slip_number,
+      item.mobile_no,
+      lookups.sourceLocationName(item.source_location_id),
+      ...(item.commodity_ids ?? []).map((cid) => lookups.commodityName(cid)),
+    ],
+    [lookups]
   );
-
-  // A WBI linked to a GRN can still be edited while the empty weight is
-  // outstanding — that is the whole point of the WBI Empty screen.
-  const canEditEntry = (item: InwardWeighBridgeEntry) => item.is_mutable || !(item.empty_weight > 0);
 
   const handleDelete = async () => {
     if (!deleteFor) return;
@@ -80,18 +85,23 @@ export default function WbiInitialScreen() {
         emptyActionLabel={canCreate ? 'New WBI entry' : undefined}
         onEmptyAction={canCreate ? () => router.push('/operations/wbi/form?mode=initial') : undefined}
         renderItem={(item) => {
-          const weighed = item.empty_weight > 0;
+          const weighed = isWeighed(item);
           return (
             <RecordCard
               title={`WBI ${item.wbi_id}`}
-              subtitle={`${item.vehicle_no || 'No vehicle'} · ${formatDate(item.date)}`}
-              badge={{ label: weighed ? 'Closed' : 'Open', tone: weighed ? 'success' : 'warning' }}
+              subtitle={[item.vehicle_no || 'No vehicle', item.driver_name, formatDate(item.date)].filter(Boolean).join(' · ')}
+              badge={{ label: weighed ? 'Weighed' : 'Awaiting weight', tone: weighed ? 'success' : 'warning' }}
               accent={weighed ? undefined : 'warning'}
               fields={[
-                { label: 'Driver', value: item.driver_name },
                 { label: 'Source', value: lookups.sourceLocationName(item.source_location_id) },
-                { label: 'Bags', value: formatNumber(item.total_bags), emphasis: true },
-                { label: 'Loaded', value: `${formatNumber(item.weight_fully_loaded)} kg` },
+                {
+                  label: 'Commodity',
+                  value: (item.commodity_ids ?? []).map((cid) => lookups.commodityName(cid)).join(', '),
+                },
+                { label: 'Bags', value: formatNumber(item.total_bags) },
+                weighed
+                  ? { label: 'Net', value: `${formatNumber(item.net_weight)} kg`, emphasis: true }
+                  : { label: 'Loaded', value: `${formatNumber(item.weight_fully_loaded)} kg` },
               ]}
               onPress={() => router.push(`/operations/wbi/${item._id}`)}
               onMenu={() => setMenuFor(item)}
@@ -113,18 +123,21 @@ export default function WbiInitialScreen() {
             onPress: () => menuFor && router.push(`/operations/wbi/${menuFor._id}`),
           },
           {
-            label: 'Edit',
+            label: menuFor && !menuFor.is_mutable ? 'Record empty weight' : 'Edit',
             icon: 'create-outline',
-            disabled: !canUpdate || !(menuFor && canEditEntry(menuFor)),
-            disabledReason: 'Locked — used in a GRN and the empty weight is recorded',
-            onPress: () => menuFor && router.push(`/operations/wbi/form?mode=initial&id=${menuFor._id}`),
+            disabled: !canUpdate || !(menuFor && wbiEditPath(menuFor)),
+            disabledReason: canUpdate ? WBI_LOCKED_REASON : 'Your role cannot edit weigh bridge entries',
+            onPress: () => {
+              const path = menuFor && wbiEditPath(menuFor);
+              if (path) router.push(path as never);
+            },
           },
           {
             label: 'Delete',
             icon: 'trash-outline',
             tone: 'danger',
             disabled: !canDelete || !menuFor?.is_deletable,
-            disabledReason: 'Locked — used in a GRN',
+            disabledReason: canDelete ? 'Locked — used in a GRN' : 'Your role cannot delete weigh bridge entries',
             onPress: () => menuFor && setDeleteFor(menuFor),
           },
         ]}

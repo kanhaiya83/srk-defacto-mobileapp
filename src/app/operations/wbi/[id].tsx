@@ -11,6 +11,7 @@ import { DetailRow } from '@/components/ui/misc';
 import { Body, Header, Screen } from '@/components/ui/screen';
 import { Text } from '@/components/ui/text';
 import { useMasterLookups } from '@/features/operations/lookups';
+import { isWeighed, wbiEditPath } from '@/features/operations/wbi';
 import { useModulePermissions } from '@/hooks/use-permissions';
 import { formatDate, formatDateTime, formatNumber } from '@/lib/format';
 import { useTheme } from '@/theme';
@@ -41,8 +42,8 @@ export default function WbiDetailScreen() {
     );
   }
 
-  const weighed = entry.empty_weight > 0;
-  const canEdit = canUpdate && (entry.is_mutable || !weighed);
+  const weighed = isWeighed(entry);
+  const editPath = canUpdate ? wbiEditPath(entry) : null;
 
   return (
     <Screen edges={['top']}>
@@ -50,13 +51,13 @@ export default function WbiDetailScreen() {
         title={`WBI ${entry.wbi_id}`}
         subtitle={entry.vehicle_no || 'No vehicle recorded'}
         right={
-          canEdit ? (
+          editPath && entry.is_mutable ? (
             <Button
               icon="create-outline"
               variant="outline"
               size="sm"
               accessibilityLabel="Edit entry"
-              onPress={() => router.push(`/operations/wbi/form?mode=initial&id=${entry._id}`)}
+              onPress={() => router.push(editPath as never)}
             />
           ) : undefined
         }
@@ -65,8 +66,8 @@ export default function WbiDetailScreen() {
       <Body>
         <Card>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm, marginBottom: theme.spacing.md }}>
-            <Badge label={weighed ? 'Closed' : 'Awaiting empty weight'} tone={weighed ? 'success' : 'warning'} />
-            {!entry.is_mutable && <Badge label="Used in GRN" tone="info" />}
+            <Badge label={weighed ? 'Weighed' : 'Awaiting empty weight'} tone={weighed ? 'success' : 'warning'} />
+            {!entry.is_mutable && <Badge label={weighed ? 'Used in GRN · locked' : 'Used in GRN'} tone="info" />}
           </View>
 
           <SectionHeader title="Weights" />
@@ -101,13 +102,13 @@ export default function WbiDetailScreen() {
           Created {formatDateTime(entry.createdAt)} · Updated {formatDateTime(entry.updatedAt)}
         </Text>
 
-        {!weighed && canUpdate && (
+        {!weighed && editPath && (
           <Button
             label="Record empty weight"
             icon="speedometer-outline"
             fullWidth
             size="lg"
-            onPress={() => router.push('/operations/wbi-final')}
+            onPress={() => router.push(`/operations/wbi/form?mode=final&id=${entry._id}`)}
             style={{ marginBottom: theme.spacing.lg }}
           />
         )}

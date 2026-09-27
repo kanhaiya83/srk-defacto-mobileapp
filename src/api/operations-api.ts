@@ -270,8 +270,9 @@ export interface BagStockManualEntry {
   updatedAt?: string;
 }
 
-export const useInwardWeighBridgeEntries = () => {
+export const useInwardWeighBridgeEntries = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [INWARD_WEIGH_BRIDGE_ENTRIES],
     queryFn: () => request.get<InwardWeighBridgeEntry[]>('/api/inward-weigh-bridge-entries').then(res => res.data),
   });
@@ -991,8 +992,9 @@ export interface OutwardWeighBridgeEntry {
 
 const OUTWARD_WEIGH_BRIDGE = 'outward-weigh-bridge-entries';
 
-export const useOutwardWeighBridgeEntries = () =>
+export const useOutwardWeighBridgeEntries = (enabled = true) =>
   useQuery({
+    enabled,
     queryKey: [OUTWARD_WEIGH_BRIDGE],
     queryFn: () => request.get<OutwardWeighBridgeEntry[]>('/api/outward-weigh-bridge-entries').then(res => res.data),
   });
