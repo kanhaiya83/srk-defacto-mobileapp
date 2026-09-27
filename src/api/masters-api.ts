@@ -180,8 +180,9 @@ const WAREHOUSE_LOCATIONS = 'warehouse-locations';
 const MACHINES = 'machines';
 const WEIGH_BRIDGES = 'weigh-bridges';
 
-export const useAgents = () => {
+export const useAgents = (enabled = true) => {
   return useQuery({
+    enabled,
     queryKey: [AGENTS],
     queryFn: () => request.get<Agent[]>('/api/agents').then(res => res.data.map(item => ({ ...item, id: item._id }))),
   });

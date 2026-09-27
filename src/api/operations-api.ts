@@ -50,6 +50,8 @@ export interface GenerateGrnEntry {
   date: string;
   is_mutable: boolean;
   is_deletable: boolean;
+  /** Set by the server once inward entries (stock) exist; the GRN and its bills are then locked. */
+  inward_created?: boolean;
   entries: GenerateGrnEntryItem[];
   createdAt?: string;
   updatedAt?: string;
@@ -329,7 +331,11 @@ export const useCreateGenerateGrnEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: GenerateGrnEntry) => request.post<GenerateGrnEntry>('/api/generate-grn-entries', data).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] }),
+    // The server locks / unlocks the weigh bridge entry with the GRN.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [INWARD_WEIGH_BRIDGE_ENTRIES] });
+    },
   });
 };
 
@@ -337,7 +343,11 @@ export const useUpdateGenerateGrnEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<GenerateGrnEntry> }) => request.put<GenerateGrnEntry>(`/api/generate-grn-entries/${id}`, data).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] }),
+    // The server locks / unlocks the weigh bridge entry with the GRN.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [INWARD_WEIGH_BRIDGE_ENTRIES] });
+    },
   });
 };
 
@@ -345,7 +355,11 @@ export const useDeleteGenerateGrnEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request.delete(`/api/generate-grn-entries/${id}`).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] }),
+    // The server locks / unlocks the weigh bridge entry with the GRN.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [INWARD_WEIGH_BRIDGE_ENTRIES] });
+    },
   });
 };
 
@@ -423,7 +437,11 @@ export const useDeleteBillEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request.delete(`/api/bill-entries/${id}`).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [BILL_ENTRIES] }),
+    // Deleting a bill also deletes its assignments.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [BILL_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [BILL_ASSIGNMENTS] });
+    },
   });
 };
 
@@ -490,7 +508,12 @@ export const useCreateInwardEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: InwardEntry) => request.post<InwardEntry>('/api/inward-entries', data).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [INWARD_ENTRIES] }),
+    // Inward entries create stock and lock their GRN (and its bills).
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [INWARD_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+    },
   });
 };
 
@@ -506,7 +529,12 @@ export const useDeleteInwardEntry = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request.delete(`/api/inward-entries/${id}`).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [INWARD_ENTRIES] }),
+    // Inward entries create stock and lock their GRN (and its bills).
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [INWARD_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [GENERATE_GRN_ENTRIES] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+    },
   });
 };
 
@@ -769,7 +797,14 @@ export const useDeleteLot = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request.delete(`/api/lots/${id}`).then(res => res.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [LOTS] }),
+    // Deleting a lot returns its consumption to the pre-lot, removes its
+    // output stock and frees its machine.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [LOTS] });
+      queryClient.invalidateQueries({ queryKey: [PRE_LOTS] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: ['machines'] });
+    },
   });
 };
 
@@ -778,9 +813,12 @@ export const useCompleteLot = () => {
   return useMutation({
     mutationFn: (id: string) =>
       request.post<Lot>(`/api/lots/${id}/complete`).then((res) => res.data),
+    // Completion releases unused pre-lot allocation and the machine lock.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [LOTS] });
+      queryClient.invalidateQueries({ queryKey: [PRE_LOTS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: ['machines'] });
     },
   });
 };
@@ -811,6 +849,7 @@ export interface PreOutward {
   preout_no: number;
   date: string;
   company_group_id: any;
+  sale_order_id?: any;
   commodities?: { _id: string; commodity_name: string }[];
   allocations: PreOutwardAllocation[];
   total_bags_allocated?: number;
@@ -931,12 +970,13 @@ export const useOutward = (id: string) =>
 export const useCreateOutward = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { date: string; preoutward_id: string; dispatches: Omit<OutwardDispatch, '_id' | 'source_type' | 'entry_no' | 'weight_per_bag' | 'rate_per_kg'>[]; remarks?: string }) =>
+    mutationFn: (data: { date: string; preoutward_id: string; dispatches: Omit<OutwardDispatch, '_id' | 'source_type' | 'entry_no' | 'weight_per_bag' | 'rate_per_kg'>[]; remarks?: string; mark_sale_order_completed?: boolean }) =>
       request.post<OutwardEntry>('/api/outwards', data).then(res => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [PRE_OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: [SALE_ORDERS] });
     },
   });
 };
@@ -944,12 +984,13 @@ export const useCreateOutward = () => {
 export const useUpdateOutward = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { date?: string; dispatches: Omit<OutwardDispatch, '_id' | 'preoutward_id' | 'source_type' | 'entry_no' | 'weight_per_bag' | 'rate_per_kg'>[]; remarks?: string } }) =>
+    mutationFn: ({ id, data }: { id: string; data: { date?: string; dispatches: Omit<OutwardDispatch, '_id' | 'preoutward_id' | 'source_type' | 'entry_no' | 'weight_per_bag' | 'rate_per_kg'>[]; remarks?: string; mark_sale_order_completed?: boolean } }) =>
       request.put<OutwardEntry>(`/api/outwards/${id}`, data).then(res => res.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [PRE_OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: [SALE_ORDERS] });
     },
   });
 };
@@ -962,6 +1003,7 @@ export const useDeleteOutward = () => {
       queryClient.invalidateQueries({ queryKey: [OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [PRE_OUTWARDS] });
       queryClient.invalidateQueries({ queryKey: [STOCK_LEDGER] });
+      queryClient.invalidateQueries({ queryKey: [SALE_ORDERS] });
     },
   });
 };
@@ -971,6 +1013,7 @@ export const useDeleteOutward = () => {
 export interface OutwardWeighBridgeEntry {
   _id: string;
   wbo_id: string;
+  slip_number: string;
   outward_id: any;
   date: string;
   vehicle_no: string;
@@ -1136,6 +1179,8 @@ export interface SaleOrder {
   date: string;
   delivery_by_date?: string;
   is_completed: boolean;
+  has_outward?: boolean;
+  outward_count?: number;
   vendor_id: any;
   orders: SaleOrderOrder[];
   createdAt?: string;

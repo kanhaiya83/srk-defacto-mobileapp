@@ -428,3 +428,25 @@ export function Accordion({
     </Animated.View>
   );
 }
+
+/** Thin progress bar. `value` is a fraction; anything above 1 shows full. */
+export function ProgressBar({
+  value,
+  tone = 'primary',
+}: {
+  value: number;
+  tone?: 'primary' | 'success' | 'warning' | 'danger';
+}) {
+  const theme = useTheme();
+  const fill = { primary: theme.colors.primary, success: theme.colors.success, warning: theme.colors.warning, danger: theme.colors.danger }[tone];
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(clamped * 100) }}
+      style={{ height: 6, borderRadius: 3, backgroundColor: theme.colors.surfaceAlt, overflow: 'hidden' }}
+    >
+      <View style={{ width: `${clamped * 100}%`, height: '100%', borderRadius: 3, backgroundColor: fill }} />
+    </View>
+  );
+}

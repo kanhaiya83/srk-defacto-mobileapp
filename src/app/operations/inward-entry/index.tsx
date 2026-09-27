@@ -1,211 +1,263 @@
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
+  useAllBillAssignments,
   useBillEntries,
+  useCreateInwardEntry,
   useGenerateGrnEntries,
   useInwardEntries,
   useInwardWeighBridgeEntries,
+  type GenerateGrnEntry,
+  type InwardEntry,
 } from '@/api/operations-api';
 import { getErrorMessage } from '@/api/request';
+import { ListBody } from '@/components/list-screen';
 import { RecordCard } from '@/components/record-card';
-import { Card } from '@/components/ui/card';
-import { EmptyState, ErrorState, ListSkeleton } from '@/components/ui/feedback';
-import { DetailRow, Segmented, StatTile } from '@/components/ui/misc';
+import { Button } from '@/components/ui/button';
 import { Header, Screen } from '@/components/ui/screen';
-import { Text } from '@/components/ui/text';
+import { ConfirmSheet } from '@/components/ui/sheet';
+import { toast } from '@/components/ui/toast';
+import { grnReadiness, inwardItemIds, inwardTotals, isFullyAllocated } from '@/features/operations/inward';
 import { useMasterLookups } from '@/features/operations/lookups';
-import { formatCurrency, formatDate, formatNumber, refId } from '@/lib/format';
-import { useTheme } from '@/theme';
+import { useModulePermissions } from '@/hooks/use-permissions';
+import { formatCurrency, formatDate, formatNumber } from '@/lib/format';
 
-type Tab = 'pending' | 'bills' | 'created';
+type Tab = 'pending' | 'created';
 
 /**
  * Inward entry — turning received goods into billed, booked stock.
  *
- * Three views of one pipeline: GRN lines still waiting for a bill, the bills
- * themselves, and the inward entries that have made it into the ledger. The
- * pending count is the backlog, which is why it leads.
+ * Pending holds GRNs whose bags are all placed but not yet in stock: each one
+ * needs its bills entered and assigned to its lines before "Create inward".
+ * Created lists the resulting inward entries.
  */
 export default function InwardEntryScreen() {
-  const theme = useTheme();
   const router = useRouter();
   const lookups = useMasterLookups();
+  const { canCreate } = useModulePermissions('inward-entry');
 
   const grns = useGenerateGrnEntries();
   const bills = useBillEntries();
+  const assignments = useAllBillAssignments();
   const inwards = useInwardEntries();
   const wbis = useInwardWeighBridgeEntries();
+  const createInward = useCreateInwardEntry();
 
   const [tab, setTab] = useState<Tab>('pending');
+  const [confirmFor, setConfirmFor] = useState<GenerateGrnEntry | null>(null);
 
-  /** GRN lines with no inward entry booked against them yet. */
-  const pending = useMemo(() => {
-    const booked = new Set((inwards.data ?? []).map((entry) => refId(entry.grn_entry_item_id)));
-    return (grns.data ?? []).flatMap((grn) =>
-      (grn.entries ?? [])
-        .filter((item) => !booked.has(item._id))
-        .map((item) => ({ grn, item }))
-    );
-  }, [grns.data, inwards.data]);
+  const inwardList = useMemo(() => inwards.data ?? [], [inwards.data]);
+  const doneLines = useMemo(() => inwardItemIds(inwardList), [inwardList]);
 
-  const billed = bills.data ?? [];
-  const created = inwards.data ?? [];
-
-  const totals = useMemo(
-    () => ({
-      pendingBags: pending.reduce((sum, row) => sum + (row.item.bags_used || 0), 0),
-      billValue: billed.reduce((sum, bill) => sum + (bill.net_amount || 0), 0),
-    }),
-    [pending, billed]
+  /** Fully allocated GRNs with at least one line not yet in stock — the web's "Pending Inward". */
+  const pending = useMemo(
+    () =>
+      (grns.data ?? []).filter(
+        (grn) => isFullyAllocated(grn) && !(grn.entries ?? []).every((item) => doneLines.has(item._id))
+      ),
+    [grns.data, doneLines]
   );
 
-  if (grns.isLoading || inwards.isLoading) {
-    return (
-      <Screen>
-        <Header title="Inward Entry" />
-        <ListSkeleton />
-      </Screen>
-    );
-  }
+  const readinessFor = useCallback(
+    (grn: GenerateGrnEntry) =>
+      grnReadiness(
+        grn,
+        (bills.data ?? []).filter((bill) => bill.grn_id === grn._id),
+        (assignments.data ?? []).filter((row) => row.grn_id === grn._id),
+        inwardList
+      ),
+    [bills.data, assignments.data, inwardList]
+  );
 
-  if (grns.isError) {
-    return (
-      <Screen>
-        <Header title="Inward Entry" />
-        <ErrorState message={getErrorMessage(grns.error)} onRetry={() => void grns.refetch()} />
-      </Screen>
-    );
-  }
+  const vehicleFor = useCallback(
+    (grn?: { wbi_id?: string } | null) => (wbis.data ?? []).find((wbi) => wbi.wbi_id === grn?.wbi_id)?.vehicle_no,
+    [wbis.data]
+  );
+
+  const grnCommodities = useCallback(
+    (grn: GenerateGrnEntry) =>
+      [...new Set((grn.entries ?? []).map((item) => lookups.commodityName(item.commodity_id)))].join(', '),
+    [lookups]
+  );
+
+  const searchPending = useCallback(
+    (grn: GenerateGrnEntry) => [
+      grn.grn_id,
+      grn.wbi_id,
+      vehicleFor(grn),
+      grnCommodities(grn),
+      ...(grn.entries ?? []).map((item) => lookups.gradeName(item.grade_id)),
+      ...(grn.entries ?? []).map((item) => lookups.locationName(item.location_id)),
+    ],
+    [vehicleFor, grnCommodities, lookups]
+  );
+
+  const searchCreated = useCallback(
+    (entry: InwardEntry) => {
+      const item = entry.grn_entry_item_data;
+      return [
+        entry.entry_no,
+        entry.grn?.grn_id,
+        vehicleFor(entry.grn),
+        lookups.companyName(inwardTotals(entry).companyId),
+        lookups.commodityName(item?.commodity_id),
+        lookups.gradeName(item?.grade_id),
+        lookups.locationName(item?.location_id),
+      ];
+    },
+    [vehicleFor, lookups]
+  );
+
+  const handleCreateInward = async () => {
+    if (!confirmFor) return;
+    try {
+      await createInward.mutateAsync({ grn_id: confirmFor._id } as InwardEntry);
+      toast.success('Inward entries created', { description: `GRN ${confirmFor.grn_id} is now in stock` });
+    } catch (error) {
+      toast.error('Could not create inward entries', { description: getErrorMessage(error) });
+    }
+    setConfirmFor(null);
+  };
+
+  const tabs = [
+    { value: 'pending' as const, label: 'Pending', count: pending.length },
+    { value: 'created' as const, label: 'Created', count: inwardList.length },
+  ];
+  const loading = grns.isLoading || inwards.isLoading || bills.isLoading || assignments.isLoading;
+  const refresh = () => {
+    void grns.refetch();
+    void bills.refetch();
+    void assignments.refetch();
+    void inwards.refetch();
+  };
+  const refreshing = grns.isRefetching || bills.isRefetching || assignments.isRefetching || inwards.isRefetching;
 
   return (
     <Screen>
       <Header
         title="Inward Entry"
-        subtitle={pending.length > 0 ? `${pending.length} GRN lines awaiting billing` : 'Everything is billed'}
+        subtitle={pending.length > 0 ? `${pending.length} GRN${pending.length === 1 ? '' : 's'} waiting for inward` : 'Nothing waiting for inward'}
       />
 
-      <ScrollView
-        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xxxl }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={grns.isRefetching || bills.isRefetching || inwards.isRefetching}
-            onRefresh={() => {
-              void grns.refetch();
-              void bills.refetch();
-              void inwards.refetch();
-            }}
-            tintColor={theme.colors.primary}
-          />
-        }
-      >
-        <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-          <StatTile
-            label="Bags awaiting bill"
-            value={formatNumber(totals.pendingBags)}
-            icon="hourglass-outline"
-            tone={pending.length > 0 ? 'warning' : 'success'}
-          />
-          <StatTile label="Billed value" value={formatCurrency(totals.billValue, 0)} icon="cash-outline" tone="info" />
-        </View>
-
-        <Segmented<Tab>
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: 'pending', label: 'Pending', count: pending.length },
-            { value: 'bills', label: 'Bills', count: billed.length },
-            { value: 'created', label: 'Booked', count: created.length },
-          ]}
-        />
-
-        {tab === 'pending' && pending.length === 0 && (
-          <EmptyState
-            icon="checkmark-done-outline"
-            title="Nothing pending"
-            description="Every GRN line has an inward entry against it."
-          />
-        )}
-
-        {tab === 'pending' &&
-          pending.map(({ grn, item }, index) => {
-            const wbi = (wbis.data ?? []).find((entry) => entry.wbi_id === grn.wbi_id);
+      {tab === 'pending' ? (
+        <ListBody<GenerateGrnEntry, Tab>
+          items={pending}
+          isLoading={loading}
+          isError={grns.isError}
+          errorMessage={grns.error ? getErrorMessage(grns.error) : undefined}
+          onRefresh={refresh}
+          refreshing={refreshing}
+          keyExtractor={(grn) => grn._id}
+          searchFields={searchPending}
+          searchPlaceholder="Search GRN, vehicle, commodity…"
+          filters={tabs}
+          filterValue={tab}
+          onFilterChange={setTab}
+          emptyTitle="Nothing waiting for inward"
+          emptyDescription="A GRN appears here once all its bags are placed on its lines."
+          renderItem={(grn) => {
+            const state = readinessFor(grn);
             return (
-              <Animated.View key={item._id} entering={index < 10 ? FadeInDown.delay(index * 20).duration(200) : undefined}>
-                <RecordCard
-                  title={`${lookups.commodityName(item.commodity_id)} · ${lookups.gradeName(item.grade_id)}`}
-                  subtitle={`GRN ${grn.grn_id} · ${wbi?.vehicle_no ?? 'No vehicle'} · ${formatDate(grn.date)}`}
-                  icon="hourglass-outline"
-                  accent="warning"
-                  fields={[
-                    { label: 'Bags', value: formatNumber(item.bags_used), emphasis: true },
-                    { label: 'Bag type', value: lookups.bagConfigName(item.bag_type_id) },
-                    { label: 'Location', value: lookups.locationName(item.location_id) },
-                    { label: 'Sub-location', value: lookups.subLocationName(item.location_id, item.sub_location_id) },
-                  ]}
-                  onPress={() =>
-                    router.push(`/operations/inward-entry/bill?grn=${grn._id}&item=${item._id}` as never)
-                  }
-                />
-              </Animated.View>
+              <RecordCard
+                title={`GRN ${grn.grn_id}`}
+                subtitle={[vehicleFor(grn), grnCommodities(grn), formatDate(grn.date)].filter(Boolean).join(' · ')}
+                badge={
+                  state.canCreateInward
+                    ? { label: 'Ready', tone: 'success' }
+                    : { label: state.billedBags < state.total ? 'To bill' : 'To assign', tone: 'warning' }
+                }
+                accent={state.canCreateInward ? 'success' : 'warning'}
+                fields={[
+                  { label: 'Bags', value: formatNumber(state.total) },
+                  { label: 'Bills', value: formatNumber((bills.data ?? []).filter((bill) => bill.grn_id === grn._id).length) },
+                  { label: 'Billed', value: `${formatNumber(state.billedBags)} / ${formatNumber(state.total)}` },
+                  { label: 'Assigned', value: `${formatNumber(state.assignedBags)} / ${formatNumber(state.total)}` },
+                ]}
+                onPress={() => router.push(`/operations/inward-entry/grn/${grn._id}` as never)}
+                footer={
+                  state.canCreateInward && canCreate ? (
+                    <Button
+                      label="Create inward"
+                      icon="download-outline"
+                      size="sm"
+                      fullWidth
+                      onPress={() => setConfirmFor(grn)}
+                    />
+                  ) : (
+                    <Button
+                      label={state.blocker ? `Bills & assignment · ${state.blocker}` : 'Bills & assignment'}
+                      icon="receipt-outline"
+                      variant="outline"
+                      size="sm"
+                      fullWidth
+                      onPress={() => router.push(`/operations/inward-entry/grn/${grn._id}` as never)}
+                    />
+                  )
+                }
+              />
             );
-          })}
-
-        {tab === 'bills' && billed.length === 0 && (
-          <EmptyState icon="receipt-outline" title="No bills yet" description="Bills raised against GRN lines appear here." />
-        )}
-
-        {tab === 'bills' &&
-          billed.map((bill, index) => (
-            <Animated.View key={bill._id} entering={index < 10 ? FadeInDown.delay(index * 20).duration(200) : undefined}>
-              <Card>
-                <View style={{ flexDirection: 'row', gap: theme.spacing.md, marginBottom: theme.spacing.sm }}>
-                  <View style={{ flex: 1, gap: 2 }}>
-                    <Text variant="bodyStrong">Bill {bill.bill_no || bill.bill_number}</Text>
-                    <Text variant="caption" tone="muted">
-                      {lookups.vendorName(refId(bill.party_id))} · {formatDate(bill.bill_date as unknown as string)}
-                    </Text>
-                  </View>
-                  <Text variant="bodyStrong" tone="primary" numeric>
-                    {formatCurrency(bill.net_amount)}
-                  </Text>
-                </View>
-                <DetailRow label="Bags" value={formatNumber(bill.total_bags)} />
-                <DetailRow label="Bill weight" value={`${formatNumber(bill.bill_weight)} kg`} />
-                <DetailRow label="Rate" value={`${formatCurrency(bill.rate)}/kg`} />
-                <DetailRow label="Before GST" value={formatCurrency(bill.amount_before_gst)} />
-                <DetailRow
-                  label="GST"
-                  value={formatCurrency((bill.cgst || 0) + (bill.sgst || 0) + (bill.igst || 0))}
-                />
-              </Card>
-            </Animated.View>
-          ))}
-
-        {tab === 'created' && created.length === 0 && (
-          <EmptyState icon="cube-outline" title="Nothing booked yet" description="Booked inward entries appear here once billed." />
-        )}
-
-        {tab === 'created' &&
-          created.map((entry, index) => (
-            <Animated.View key={entry._id} entering={index < 10 ? FadeInDown.delay(index * 20).duration(200) : undefined}>
+          }}
+        />
+      ) : (
+        <ListBody<InwardEntry, Tab>
+          items={inwardList}
+          isLoading={loading}
+          isError={inwards.isError}
+          errorMessage={inwards.error ? getErrorMessage(inwards.error) : undefined}
+          onRefresh={refresh}
+          refreshing={refreshing}
+          keyExtractor={(entry) => entry._id}
+          searchFields={searchCreated}
+          searchPlaceholder="Search inward, GRN, company…"
+          filters={tabs}
+          filterValue={tab}
+          onFilterChange={setTab}
+          emptyTitle="No inward entries yet"
+          emptyDescription="They appear here once a GRN's bills are assigned and its inward is created."
+          renderItem={(entry) => {
+            const totals = inwardTotals(entry);
+            const item = entry.grn_entry_item_data;
+            return (
               <RecordCard
                 title={`Inward ${entry.entry_no}`}
-                subtitle={`GRN ${entry.grn?.grn_id ?? refId(entry.grn_id)}`}
+                subtitle={[
+                  `GRN ${entry.grn?.grn_id ?? '—'}`,
+                  vehicleFor(entry.grn),
+                  lookups.companyName(totals.companyId),
+                  formatDate(entry.createdAt),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
                 icon="download-outline"
                 fields={[
-                  { label: 'Total bags', value: formatNumber(entry.total_bags), emphasis: true },
-                  { label: 'Available', value: formatNumber(entry.available_bags) },
-                  { label: 'Weight', value: entry.total_weight ? `${formatNumber(entry.total_weight)} kg` : null },
-                  { label: 'Rate', value: entry.inward_rate ? `${formatCurrency(entry.inward_rate)}/kg` : null },
+                  {
+                    label: 'Commodity',
+                    value: `${lookups.commodityName(item?.commodity_id)} · ${lookups.gradeName(item?.grade_id)}`,
+                  },
+                  { label: 'Bills', value: formatNumber(totals.count) },
+                  { label: 'Bags', value: formatNumber(totals.bags), emphasis: true },
+                  { label: 'Weight', value: `${formatNumber(totals.weight, 2)} kg` },
+                  { label: 'Amount', value: formatCurrency(totals.amount) },
+                  { label: 'Location', value: lookups.locationName(item?.location_id) },
                 ]}
+                onPress={() => router.push(`/operations/challan-report/${entry._id}` as never)}
               />
-            </Animated.View>
-          ))}
-      </ScrollView>
+            );
+          }}
+        />
+      )}
+
+      <ConfirmSheet
+        open={confirmFor !== null}
+        onClose={() => setConfirmFor(null)}
+        onConfirm={handleCreateInward}
+        loading={createInward.isPending}
+        tone="primary"
+        confirmLabel="Create inward"
+        title={confirmFor ? `Create inward for GRN ${confirmFor.grn_id}?` : ''}
+        description="This books the assigned bags into stock and locks the GRN and its bills' quantities and amounts."
+      />
     </Screen>
   );
 }

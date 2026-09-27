@@ -127,6 +127,8 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
           theme.typography.body,
           {
             flex: 1,
+            // Lets the input shrink in a half-width row so a unit suffix stays visible.
+            minWidth: 0,
             color: readOnly ? theme.colors.mutedText : theme.colors.text,
             paddingVertical: multiline ? 0 : 12,
             textAlignVertical: multiline ? 'top' : 'center',

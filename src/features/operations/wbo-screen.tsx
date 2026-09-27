@@ -156,6 +156,8 @@ export function WboScreen({ mode }: { mode: 'empty' | 'loaded' }) {
       mobile_no: form.mobile_no,
       drivers_license_no: form.drivers_license_no,
       rc_copy_no: form.rc_copy_no,
+      // Carried through until this screen gets its own slip number field.
+      slip_number: entries.find((entry) => entry._id === form.id)?.slip_number ?? '',
       empty_weight: form.empty_weight === '' ? undefined : Number(form.empty_weight),
       weight_fully_loaded: form.weight_fully_loaded === '' ? undefined : Number(form.weight_fully_loaded),
       net_weight: netWeight ?? undefined,
